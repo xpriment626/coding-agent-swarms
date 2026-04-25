@@ -1,0 +1,45 @@
+### Follow-up nudges — only needed when a loop stalls
+#
+# All messages go through puppet so they appear in the thread view and
+# trigger agent wait_for_mentions like normal human input would.
+
+@baseUrl = http://localhost:5555
+@authKey = dev
+@sessionId = PASTE_SESSION_ID
+@threadId = PASTE_THREAD_ID
+
+### Nudge the implementer to start coding
+POST {{baseUrl}}/api/v1/puppet/default/{{sessionId}}/puppet/thread/message
+Authorization: Bearer {{authKey}}
+Content-Type: application/json
+
+{
+  "threadId": "{{threadId}}",
+  "content": "@implementer the brief is ready — please start writing code into /workspace.",
+  "mentions": ["implementer"]
+}
+
+### Ask the reviewer to weigh in
+POST {{baseUrl}}/api/v1/puppet/default/{{sessionId}}/puppet/thread/message
+Authorization: Bearer {{authKey}}
+Content-Type: application/json
+
+{
+  "threadId": "{{threadId}}",
+  "content": "@reviewer please inspect the current state of /workspace and flag any issues before we ship.",
+  "mentions": ["reviewer"]
+}
+
+### Force-close the session (last resort)
+POST {{baseUrl}}/api/v1/puppet/default/{{sessionId}}/puppet/runtime/end
+Authorization: Bearer {{authKey}}
+Content-Type: application/json
+
+{}
+
+### Close the thread cleanly
+POST {{baseUrl}}/api/v1/puppet/default/{{sessionId}}/puppet/thread/close
+Authorization: Bearer {{authKey}}
+Content-Type: application/json
+
+{ "threadId": "{{threadId}}" }

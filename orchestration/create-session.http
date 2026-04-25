@@ -1,0 +1,76 @@
+### Coral session creation — three-agent coding swarm
+#
+# Prereqs:
+#   1. `./orchestration/create-sandbox.sh` to get a fresh Daytona sandbox id
+#   2. Paste the sandbox id into the @sandboxId variable below
+#   3. Make sure Coral server is running:
+#         CONFIG_FILE_PATH=./registry.toml npx coralos-dev@latest server start
+#
+# Flow: click Send once; response returns `{namespace, sessionId}`. Reload
+# the Coral Console (http://localhost:5555/ui/console) to see it appear.
+
+@baseUrl = http://localhost:5555
+@authKey = dev
+@sandboxId = PASTE_SANDBOX_ID_FROM_CREATE_SANDBOX_SCRIPT
+
+# @name createSession
+POST {{baseUrl}}/api/v1/local/session
+Authorization: Bearer {{authKey}}
+Content-Type: application/json
+
+{
+  "agentGraphRequest": {
+    "agents": [
+      {
+        "id": { "name": "planner", "version": "0.1.0", "registrySourceId": { "type": "local" } },
+        "name": "planner",
+        "provider": { "type": "local", "runtime": "executable" },
+        "options": {
+          "MODEL_API_KEY":      { "type": "string", "value": "{{$dotenv OPENROUTER_API_KEY}}" },
+          "EXA_API_KEY":        { "type": "string", "value": "{{$dotenv EXA_API_KEY}}" },
+          "DAYTONA_API_KEY":    { "type": "string", "value": "{{$dotenv DAYTONA_API_KEY}}" },
+          "DAYTONA_SANDBOX_ID": { "type": "string", "value": "{{sandboxId}}" }
+        }
+      },
+      {
+        "id": { "name": "implementer", "version": "0.1.0", "registrySourceId": { "type": "local" } },
+        "name": "implementer",
+        "provider": { "type": "local", "runtime": "executable" },
+        "options": {
+          "MODEL_API_KEY":      { "type": "string", "value": "{{$dotenv OPENROUTER_API_KEY}}" },
+          "EXA_API_KEY":        { "type": "string", "value": "{{$dotenv EXA_API_KEY}}" },
+          "DAYTONA_API_KEY":    { "type": "string", "value": "{{$dotenv DAYTONA_API_KEY}}" },
+          "DAYTONA_SANDBOX_ID": { "type": "string", "value": "{{sandboxId}}" }
+        }
+      },
+      {
+        "id": { "name": "reviewer", "version": "0.1.0", "registrySourceId": { "type": "local" } },
+        "name": "reviewer",
+        "provider": { "type": "local", "runtime": "executable" },
+        "options": {
+          "MODEL_API_KEY":      { "type": "string", "value": "{{$dotenv OPENROUTER_API_KEY}}" },
+          "EXA_API_KEY":        { "type": "string", "value": "{{$dotenv EXA_API_KEY}}" },
+          "DAYTONA_API_KEY":    { "type": "string", "value": "{{$dotenv DAYTONA_API_KEY}}" },
+          "DAYTONA_SANDBOX_ID": { "type": "string", "value": "{{sandboxId}}" }
+        }
+      },
+      {
+        "id": { "name": "puppet", "version": "1.0.0", "registrySourceId": { "type": "local" } },
+        "name": "puppet",
+        "provider": { "type": "local", "runtime": "prototype" }
+      }
+    ],
+    "groups": [["planner", "implementer", "reviewer", "puppet"]]
+  },
+  "namespaceProvider": {
+    "type": "create_if_not_exists",
+    "namespaceRequest": { "name": "default", "deleteOnLastSessionExit": false }
+  },
+  "execution": {
+    "mode": "immediate",
+    "runtimeSettings": {
+      "extendedEndReport": false,
+      "persistenceMode": { "mode": "hold_after_exit", "duration": 600000 }
+    }
+  }
+}

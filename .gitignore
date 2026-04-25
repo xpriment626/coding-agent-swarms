@@ -1,0 +1,24 @@
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+.idea/
+.idea
+.kotlin
+out/
+!**/src/main/**/out/
+
+### Mac OS ###
+.DS_Store
+
+### Project-specific ###
+.env
+.playwright-mcp
+coral-agent.dev.env
+coral-server.log
+.npmrc
+agent_log.json
+
+### Scaffolder helpers that shouldn't live in git ###
+# CLAUDE.md is per-user orientation; keep local unless explicitly shared
+CLAUDE.md

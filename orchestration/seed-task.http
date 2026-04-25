@@ -1,0 +1,37 @@
+### Seed the swarm with a coding task
+#
+# Run create-session.http first. Paste the returned sessionId below.
+# Then adjust `content` to describe the coding task. Send in order:
+# createThread → seed message.
+
+@baseUrl = http://localhost:5555
+@authKey = dev
+@sessionId = PASTE_SESSION_ID_FROM_CREATE_SESSION
+
+###
+# 1. Create a shared thread with all three real agents as participants.
+
+# @name createThread
+POST {{baseUrl}}/api/v1/puppet/default/{{sessionId}}/puppet/thread
+Authorization: Bearer {{authKey}}
+Content-Type: application/json
+
+{
+  "threadName": "coding task",
+  "participantNames": ["planner", "implementer", "reviewer"]
+}
+
+###
+# 2. Send the task into the thread, mentioning @planner first.
+#    Edit `content` to describe your actual task. Keep it concrete —
+#    the planner will decompose from there.
+
+POST {{baseUrl}}/api/v1/puppet/default/{{sessionId}}/puppet/thread/message
+Authorization: Bearer {{authKey}}
+Content-Type: application/json
+
+{
+  "threadId": "{{createThread.response.body.thread.id}}",
+  "content": "Build a small CLI in Python that accepts a URL, fetches the page, extracts all hrefs from anchor tags, and prints them sorted and deduplicated. Include a pytest suite covering happy path + error cases (timeout, 404, malformed HTML). Use the requests + beautifulsoup4 libraries. @planner please start — decompose the task, decide file layout in /workspace, then hand to @implementer.",
+  "mentions": ["planner"]
+}

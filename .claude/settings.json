@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -* http://localhost:5555/**)",
+      "Bash(curl -* https://app.daytona.io/api/**)",
+      "Bash(curl -* https://proxy.app.daytona.io/toolbox/**)",
+      "Bash(./prewarm.sh)",
+      "Bash(./orchestration/*.sh)",
+      "Bash(CONFIG_FILE_PATH=*)",
+      "Bash(npx coralos-dev@*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(grep *coral-server.log*)",
+      "Bash(grep *~/.coral/logs/server.log*)",
+      "Bash(tail *coral-server.log*)",
+      "Bash(ls *sandbox-out*)"
+    ],
+    "deny": [
+      "Bash(curl *api.openai.com/**)",
+      "Bash(curl *api.anthropic.com/**)",
+      "Bash(rm -rf *)",
+      "Bash(git push*)"
+    ]
+  }
+}
