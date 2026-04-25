@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+bun.lock
+bun.lockb
+*.tsbuildinfo
+
+# Each agent's dev env file (loaded by env.ts in standalone mode)
+**/coral-agent.dev.env
