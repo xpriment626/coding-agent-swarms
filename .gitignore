@@ -19,6 +19,10 @@ coral-server.log
 .npmrc
 agent_log.json
 
+### Local design / research notes (gitignored — keep local) ###
+docs/
+deepseek-swarm/
+
 ### Scaffolder helpers that shouldn't live in git ###
 # CLAUDE.md is per-user orientation; keep local unless explicitly shared
 CLAUDE.md
