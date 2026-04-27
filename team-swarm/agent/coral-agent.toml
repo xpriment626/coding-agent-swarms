@@ -1,22 +1,28 @@
-# Single agent definition for the team-swarm. Research-side copy.
-# Parallel of pi-coral/src/team-swarm/agent/coral-agent.toml; allowed to diverge.
-#
-# Instantiated N times via runSwarmTask config (instances field).
-# Same TOML, same prompt, same bindings — every instance.
-# Multiplicity comes from session config; identity is intentionally
-# capability-defining + functional-context-only. NO role prescription.
+edition = 4
 
+[agent]
 name = "engineer"
 version = "0.1.0"
+summary = "Generic homogeneous engineer agent — code mode + peer comms."
 description = "Generic homogeneous engineer agent — code mode + peer comms."
+readme = """
+# engineer
 
-[runtime]
-type = "executable"
-# TODO(M1): point at the bun runtime entry: bun ../shared/run-agent.ts
-# command = ["bun", "../shared/run-agent.ts"]
+Homogeneous high-agency engineer agent for the team-swarm. N instances of this
+exact agent self-organize via Coral peer comms; no role prescription.
+"""
+
+[agent.license]
+type = "text"
+text = "apache-2.0"
+
+[options.AGENT_NAME]
+type = "string"
+display.description = "Name assigned to this agent instance by the operator."
 
 [options.EXTRA_SYSTEM_PROMPT]
 type = "string"
+display.multiline = true
 default = """
 You are an engineer working on a small team of fellow engineers. Your team has been hired to
 complete a coding task in a shared Daytona workspace at /workspace.
@@ -26,7 +32,6 @@ You have ONE tool: run_typescript({ code }).
 Inside that code, you have these typed bindings:
   - daytona.{read, write, exec, list}            # workspace I/O
   - team.{post, wait, threads, createThread, agents}   # peer communication
-  - exa.{search, fetch}                          # research
 
 Coordinate with your teammates however makes sense. There is no designated planner,
 implementer, or reviewer — figure out the division of work yourselves. The user will
@@ -35,6 +40,11 @@ judge done-ness via an external acceptance command, not by anything you say.
 
 [options.EXTRA_INITIAL_USER_PROMPT]
 type = "string"
+display.multiline = true
 default = ""
-# Filled at session creation by run-swarm-task.ts with the seed:
-#   "Your team has been hired to: <intent>. Your shared coordination thread is `team-room`."
+
+# Runtime is finalized in Task 10. Pointing at run.sh now keeps the schema valid;
+# Task 10 creates run.sh as a thin wrapper around `bun ../shared/run-agent.ts`.
+[runtimes.executable]
+path = "./run.sh"
+arguments = []

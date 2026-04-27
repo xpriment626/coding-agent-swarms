@@ -2,7 +2,10 @@
 keys = ["dev"]
 
 [registry]
-local_agents = ["/Users/bambozlor/Desktop/product-lab/coding-agent-swarms/deepseek-swarm/*"]
+local_agents = [
+  "/Users/bambozlor/Desktop/product-lab/coding-agent-swarms/deepseek-swarm/*",
+  "/Users/bambozlor/Desktop/product-lab/coding-agent-swarms/team-swarm/*",
+]
 include_coral_home_agents = false
 include_debug_agents = true
 watch_local_agents = true
