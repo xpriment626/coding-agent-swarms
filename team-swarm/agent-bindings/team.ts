@@ -92,12 +92,6 @@ export const team = {
     return messages;
   },
 
-  async threads(): Promise<TeamThread[]> {
-    const raw = await callTool("coral_list_threads", {});
-    const parsed = parseToolResult(raw);
-    return Array.isArray(parsed) ? (parsed as TeamThread[]) : [];
-  },
-
   async createThread(name: string, participants: string[]): Promise<TeamThread> {
     const raw = await callTool("coral_create_thread", {
       threadName: name,
@@ -109,10 +103,11 @@ export const team = {
     }
     return parsed as TeamThread;
   },
-
-  async agents(): Promise<TeamAgent[]> {
-    const raw = await callTool("coral_list_agents", {});
-    const parsed = parseToolResult(raw);
-    return Array.isArray(parsed) ? (parsed as TeamAgent[]) : [];
-  },
 };
+
+// Note (verified live in plan Task 11): this Coral build does NOT expose
+// coral_list_threads or coral_list_agents. Discovery is not available from the
+// agent side; the operator hands agents thread name + peer names via the seed
+// prompt. Available tools: coral_send_message, coral_wait_for_message,
+// coral_create_thread, coral_add_participant, coral_close_thread,
+// coral_remove_participant, coral_wait_for_agent, coral_wait_for_mention.
