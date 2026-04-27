@@ -144,5 +144,54 @@ export async function getSessionSnapshot(ns: string, sid: string): Promise<Sessi
   return (await res.json()) as SessionSnapshot;
 }
 
+export function subscribeSessionEvents(
+  ns: string,
+  sid: string,
+  onEvent: (e: SessionEvent) => void
+): { close: () => void } {
+  const token = requireEnv("coralAuthKey");
+  const url = `${env.coralWsBase}/ws/v1/events/${encodeURIComponent(token)}/session/${encodeURIComponent(ns)}/${encodeURIComponent(sid)}`;
+
+  let closed = false;
+  let ws: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const connect = (): void => {
+    if (closed) return;
+    ws = new WebSocket(url);
+    ws.onmessage = (ev: MessageEvent) => {
+      const data = typeof ev.data === "string" ? ev.data : "";
+      if (!data) return;
+      try {
+        const parsed = JSON.parse(data) as SessionEvent;
+        onEvent(parsed);
+      } catch {
+        // Ignore unparseable frames
+      }
+    };
+    ws.onclose = () => {
+      if (closed) return;
+      reconnectTimer = setTimeout(connect, 2500);
+    };
+    ws.onerror = () => {
+      // onclose follows; let the reconnect path handle it.
+    };
+  };
+
+  connect();
+
+  return {
+    close: () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+      }
+    },
+  };
+}
+
 // Re-export types so consumers can import everything from one place.
 export type { ExecResult, SessionEvent, SessionSnapshot, SessionSpec };
