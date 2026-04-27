@@ -29,5 +29,7 @@ CLAUDE.md
 
 ### TS workspace ###
 node_modules/
-runs/
+# Anchored to repo root only — the SvelteKit telemetry-fe app has a
+# routes/runs/[id]/ directory that should be tracked.
+/runs/
 bun.lockb
