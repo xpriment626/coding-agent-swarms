@@ -92,7 +92,19 @@ async function main(): Promise<void> {
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const result = await generateText({
-      model: openrouter("deepseek/deepseek-v4-flash"),
+      // OpenRouter provider routing pin: prefer DeepInfra, allow fallbacks,
+      // ignore "DeepSeek" upstream. See feedback_openrouter-deepseek-blacklist.md
+      // for context (revisit ~2026-04-29 — DeepSeek upstream was degraded
+      // status:-5 / 0% uptime when this was added).
+      model: openrouter("deepseek/deepseek-v4-flash", {
+        extraBody: {
+          provider: {
+            order: ["DeepInfra"],
+            allow_fallbacks: true,
+            ignore: ["DeepSeek"],
+          },
+        },
+      }),
       tools: { run_typescript: runTypescriptTool },
       maxSteps: 10,
       // @ts-expect-error — ai package CoreMessage type is more permissive at runtime
