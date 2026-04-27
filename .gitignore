@@ -26,3 +26,8 @@ deepseek-swarm/
 ### Scaffolder helpers that shouldn't live in git ###
 # CLAUDE.md is per-user orientation; keep local unless explicitly shared
 CLAUDE.md
+
+### TS workspace ###
+node_modules/
+runs/
+bun.lockb
