@@ -193,5 +193,37 @@ export function subscribeSessionEvents(
   };
 }
 
+export async function puppetCreateThread(
+  ns: string,
+  sid: string,
+  threadName: string,
+  participantNames: string[]
+): Promise<{ threadId: string }> {
+  const res = await fetch(
+    `${env.coralHttpBase}/api/v1/puppet/${encodeURIComponent(ns)}/${encodeURIComponent(sid)}/puppet/thread`,
+    {
+      method: "POST",
+      headers: await coralHeaders(),
+      body: JSON.stringify({ threadName, participantNames }),
+    }
+  );
+  await throwOnNon2xx(res, "puppetCreateThread");
+  const data = (await res.json()) as { thread?: { id?: string } };
+  if (!data.thread?.id) {
+    throw new Error(`puppetCreateThread: response missing thread.id: ${JSON.stringify(data)}`);
+  }
+  return { threadId: data.thread.id };
+}
+
+export async function puppetForceEndRuntime(ns: string, sid: string): Promise<void> {
+  const res = await fetch(
+    `${env.coralHttpBase}/api/v1/puppet/${encodeURIComponent(ns)}/${encodeURIComponent(sid)}/puppet/runtime/end`,
+    { method: "POST", headers: await coralHeaders() }
+  );
+  // 404 is acceptable per foundation memory — endpoint may have moved.
+  if (res.status === 404) return;
+  await throwOnNon2xx(res, "puppetForceEndRuntime");
+}
+
 // Re-export types so consumers can import everything from one place.
 export type { ExecResult, SessionEvent, SessionSnapshot, SessionSpec };
