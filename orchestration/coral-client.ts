@@ -215,6 +215,24 @@ export async function puppetCreateThread(
   return { threadId: data.thread.id };
 }
 
+export async function puppetSendMessage(
+  ns: string,
+  sid: string,
+  threadId: string,
+  content: string,
+  mentions: string[] = []
+): Promise<void> {
+  const res = await fetch(
+    `${env.coralHttpBase}/api/v1/puppet/${encodeURIComponent(ns)}/${encodeURIComponent(sid)}/puppet/thread/message`,
+    {
+      method: "POST",
+      headers: await coralHeaders(),
+      body: JSON.stringify({ threadId, content, mentions }),
+    }
+  );
+  await throwOnNon2xx(res, "puppetSendMessage");
+}
+
 export async function puppetForceEndRuntime(ns: string, sid: string): Promise<void> {
   const res = await fetch(
     `${env.coralHttpBase}/api/v1/puppet/${encodeURIComponent(ns)}/${encodeURIComponent(sid)}/puppet/runtime/end`,

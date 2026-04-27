@@ -18,10 +18,12 @@ import {
   getSessionSnapshot,
   subscribeSessionEvents,
   puppetCreateThread,
+  puppetSendMessage,
   puppetForceEndRuntime,
 } from "./coral-client.ts";
 import type {
   AgentInstanceSpec,
+  SessionAgentSpec,
   SessionEvent,
   SessionSpec,
   TaskResult,
@@ -34,7 +36,7 @@ type RunOptions = {
   runDir?: string;
 };
 
-type WaitState = Map<string, "waiting" | "active">;
+type WaitState = Map<string, "waiting" | "active" | "stopped">;
 
 const DEFAULT_INSTANCES: AgentInstanceSpec[] = [{ name: "agent-A" }, { name: "agent-B" }];
 const DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
@@ -75,7 +77,7 @@ function buildSessionSpec(
   const modelKey = requireEnvVar("OPENROUTER_API_KEY");
   const daytonaKey = requireEnvVar("DAYTONA_API_KEY");
 
-  const agents = instances.map((inst) => {
+  const engineerAgents: SessionAgentSpec[] = instances.map((inst) => {
     const peers = instances.filter((i) => i.name !== inst.name).map((i) => i.name);
     return {
       id: { name: "engineer", version: "0.1.0", registrySourceId: { type: "local" as const } },
@@ -99,9 +101,23 @@ function buildSessionSpec(
     };
   });
 
+  // Required for the puppet REST endpoints (/api/v1/puppet/...). Server impersonates
+  // this agent when the operator drives threads/messages from outside.
+  const puppetAgent: SessionAgentSpec = {
+    id: { name: "puppet", version: "1.0.0", registrySourceId: { type: "local" as const } },
+    name: "puppet",
+    description: "",
+    provider: { type: "local" as const, runtime: "prototype" as const },
+    blocking: false as const,
+    customToolAccess: [] as [],
+    plugins: [] as [],
+    x402Budgets: [] as [],
+    options: {},
+  };
+
   return {
     agentGraphRequest: {
-      agents,
+      agents: [...engineerAgents, puppetAgent],
       groups: [],
       customTools: {},
     },
@@ -189,25 +205,41 @@ export async function runSwarmTask(input: {
     ({ namespace: ns, sessionId: sid } = await createSession(spec));
     console.error(`[runner] session=${ns}/${sid}`);
 
-    // Step 4: team-room thread (with one retry)
-    const tryCreateThread = async (): Promise<void> => {
-      await puppetCreateThread(
-        ns!,
-        sid!,
-        "team-room",
-        instances.map((i) => i.name)
-      );
+    // Step 4: team-room thread (with one retry).
+    // Puppet must be in participants — it's the implicit sender for any
+    // messages we drive from the operator side.
+    let teamRoomThreadId: string | undefined;
+    const tryCreateThread = async (): Promise<string> => {
+      const { threadId } = await puppetCreateThread(ns!, sid!, "team-room", [
+        ...instances.map((i) => i.name),
+        "puppet",
+      ]);
+      return threadId;
     };
     try {
-      await tryCreateThread();
+      teamRoomThreadId = await tryCreateThread();
     } catch (e) {
       console.error(
         `[runner] puppetCreateThread first attempt failed: ${(e as Error).message}; retrying in 100ms`
       );
       await new Promise((r) => setTimeout(r, 100));
-      await tryCreateThread();
+      teamRoomThreadId = await tryCreateThread();
     }
-    console.error(`[runner] team-room created`);
+    console.error(`[runner] team-room created: ${teamRoomThreadId}`);
+
+    // Step 4b: kick-off message. Agents need the thread UUID to post back
+    // (coral_send_message uses threadId, not threadName). The seed prompt is
+    // fixed at session create — too early to know the threadId. So the puppet
+    // posts a kick-off mentioning every engineer; their first team.wait()
+    // surfaces this message, from which they can read message.threadId.
+    await puppetSendMessage(
+      ns!,
+      sid!,
+      teamRoomThreadId!,
+      `Welcome team. The task: ${input.task}\n\nThis thread (\`team-room\`) is your shared coordination channel — its id is in this message's metadata. Use team.wait() to receive teammate replies, team.post(threadId, ...) to send.`,
+      instances.map((i) => i.name)
+    );
+    console.error(`[runner] kick-off message posted`);
 
     // Step 5: run dir + manifest
     if (!runDir) runDir = `runs/${timestampPrefix()}-${sid.slice(0, 8)}`;
@@ -247,10 +279,23 @@ export async function runSwarmTask(input: {
           errors.push(`transcript.jsonl append: ${(err as Error).message}`);
         }
       }
-      if (e.type === "agent_wait_start" && e.name) waitState.set(e.name, "waiting");
-      if (e.type === "agent_wait_stop" && e.name) waitState.set(e.name, "active");
-      if (e.type === "thread_message_sent" && e.message?.senderName) {
+      // Only track wait state for engineer instances (puppet is virtual; ignore).
+      if (e.type === "agent_wait_start" && e.name && waitState.has(e.name)) {
+        waitState.set(e.name, "waiting");
+      }
+      if (e.type === "agent_wait_stop" && e.name && waitState.has(e.name)) {
+        waitState.set(e.name, "active");
+      }
+      if (
+        e.type === "thread_message_sent" &&
+        e.message?.senderName &&
+        waitState.has(e.message.senderName)
+      ) {
         waitState.set(e.message.senderName, "active");
+      }
+      // Engineer agent process died (crash, billing, etc.).
+      if (e.type === "runtime_stopped" && e.name && waitState.has(e.name)) {
+        waitState.set(e.name, "stopped");
       }
       // Pretty-print to stdout for live operator visibility
       const ts = e.timestamp ?? new Date().toISOString();
@@ -272,7 +317,15 @@ export async function runSwarmTask(input: {
         acceptanceResult = { passed: false };
         break;
       }
-      const allWaiting = Array.from(waitState.values()).every((v) => v === "waiting");
+      const states = Array.from(waitState.values());
+      // Bail early if every engineer agent has died — nothing left to wait for.
+      if (states.length > 0 && states.every((v) => v === "stopped")) {
+        errors.push("all engineer agents stopped before acceptance — see Coral logs");
+        exitReason = "error";
+        acceptanceResult = { passed: false };
+        break;
+      }
+      const allWaiting = states.every((v) => v === "waiting");
       if (allWaiting) {
         const passed = await accept(sandboxId, waitState).catch((e) => {
           errors.push(`accept: ${(e as Error).message}`);

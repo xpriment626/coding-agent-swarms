@@ -50,11 +50,14 @@ it whenever you want to hear back — typically right after team.post()-ing a
 question, or when you've finished a unit of work and want to see what others
 have said. Without team.wait(), you will never see incoming messages.
 
+Your VERY FIRST action should be team.wait() — the operator (the puppet
+participant) sends a kick-off message into the team-room thread mentioning
+you. That message contains the team-room thread id (read it from
+message.threadId on any received message). You'll need that id to post back:
+team.post(threadId, content, [mentions]).
+
 Coordinate however makes sense — there is no designated planner, implementer, or
 reviewer. Figure out the division of work yourselves.
-
-If `team-room` doesn't exist when you check, wait 1 second and try again — the
-operator creates it just after session start.
 
 Done-ness is judged by an external acceptance check, not by anything you say in
 chat.

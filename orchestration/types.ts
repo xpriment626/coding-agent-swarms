@@ -40,19 +40,21 @@ export type ExecResult = { stdout: string; stderr: string; exitCode: number };
 
 export type AgentInstanceSpec = { name: string };
 
+export type SessionAgentSpec = {
+  id: { name: string; version: string; registrySourceId: { type: "local" } };
+  name: string;
+  description: string;
+  provider: { type: "local"; runtime: "executable" | "prototype" };
+  blocking: false;
+  customToolAccess: [];
+  plugins: [];
+  x402Budgets: [];
+  options: Record<string, { type: "string"; value: string }>;
+};
+
 export type SessionSpec = {
   agentGraphRequest: {
-    agents: Array<{
-      id: { name: string; version: string; registrySourceId: { type: "local" } };
-      name: string;
-      description: string;
-      provider: { type: "local"; runtime: "executable" };
-      blocking: false;
-      customToolAccess: [];
-      plugins: [];
-      x402Budgets: [];
-      options: Record<string, { type: "string"; value: string }>;
-    }>;
+    agents: SessionAgentSpec[];
     groups: [];
     customTools: Record<string, never>;
   };
