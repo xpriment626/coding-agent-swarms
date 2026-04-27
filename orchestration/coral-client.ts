@@ -112,5 +112,37 @@ export async function prewarmWorkspace(sandboxId: string): Promise<void> {
   }
 }
 
+async function coralHeaders(): Promise<Record<string, string>> {
+  return {
+    Authorization: `Bearer ${requireEnv("coralAuthKey")}`,
+    "Content-Type": "application/json",
+  };
+}
+
+export async function createSession(
+  spec: SessionSpec
+): Promise<{ namespace: string; sessionId: string }> {
+  const res = await fetch(`${env.coralHttpBase}/api/v1/local/session`, {
+    method: "POST",
+    headers: await coralHeaders(),
+    body: JSON.stringify(spec),
+  });
+  await throwOnNon2xx(res, "createSession");
+  const data = (await res.json()) as { namespace?: string; sessionId?: string };
+  if (!data.namespace || !data.sessionId) {
+    throw new Error(`createSession: response missing fields: ${JSON.stringify(data)}`);
+  }
+  return { namespace: data.namespace, sessionId: data.sessionId };
+}
+
+export async function getSessionSnapshot(ns: string, sid: string): Promise<SessionSnapshot> {
+  const res = await fetch(
+    `${env.coralHttpBase}/api/v1/local/session/${encodeURIComponent(ns)}/${encodeURIComponent(sid)}/extended`,
+    { method: "GET", headers: await coralHeaders() }
+  );
+  await throwOnNon2xx(res, "getSessionSnapshot");
+  return (await res.json()) as SessionSnapshot;
+}
+
 // Re-export types so consumers can import everything from one place.
 export type { ExecResult, SessionEvent, SessionSnapshot, SessionSpec };
