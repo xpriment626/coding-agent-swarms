@@ -92,19 +92,13 @@ async function main(): Promise<void> {
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const result = await generateText({
-      // OpenRouter provider routing pin: prefer DeepInfra, allow fallbacks,
-      // ignore "DeepSeek" upstream. See feedback_openrouter-deepseek-blacklist.md
-      // for context (revisit ~2026-04-29 — DeepSeek upstream was degraded
-      // status:-5 / 0% uptime when this was added).
-      model: openrouter("deepseek/deepseek-v4-flash", {
-        extraBody: {
-          provider: {
-            order: ["DeepInfra"],
-            allow_fallbacks: true,
-            ignore: ["DeepSeek"],
-          },
-        },
-      }),
+      // Temporary swap: `deepseek/deepseek-v4-flash` is currently unusable for
+      // tool-calling — DeepSeek upstream is degraded (status:-5, 0% 30m uptime)
+      // and DeepInfra (the only other tool-capable provider) is rate-limiting
+      // OpenRouter's shared pool with HTTP 429. Kimi K2-0905 is auto-routed to
+      // Novita with tools support and is verified working in this account.
+      // Revert target: 2026-04-29. See feedback_openrouter-deepseek-blacklist.md.
+      model: openrouter("moonshotai/kimi-k2-0905"),
       tools: { run_typescript: runTypescriptTool },
       maxSteps: 10,
       // @ts-expect-error — ai package CoreMessage type is more permissive at runtime

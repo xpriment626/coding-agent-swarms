@@ -21,7 +21,6 @@ export type TeamThread = { id: string; name: string; participants: string[] };
 export type TeamAgent = { name: string; description: string };
 
 let client: Client | null = null;
-let lastSeenTs = 0;
 
 function agentName(): string {
   const n = process.env.AGENT_NAME;
@@ -68,28 +67,17 @@ export const team = {
     });
   },
 
-  async wait(opts?: {
-    thread?: string;
-    mentions?: string[];
-    timeoutMs?: number;
-  }): Promise<TeamMessage[]> {
-    const timeoutMs = opts?.timeoutMs ?? 25_000;
-    const replayAfter = lastSeenTs > 0 ? lastSeenTs - 1 : 0;
-    const args: Record<string, unknown> = {
-      timeoutMs,
-      replayAfter,
-    };
-    if (opts?.thread) args.threadId = opts.thread;
-    if (opts?.mentions?.length) args.mentions = opts.mentions;
-
-    const raw = await callTool("coral_wait_for_message", args);
+  // Blocks until the next message addressed to this agent arrives, OR until
+  // maxWaitMs elapses. Returns the message (or null on timeout). Coral's
+  // coral_wait_for_message uses currentUnixTime as the watermark — anything
+  // older than that is filtered out, dodging the darkpool race.
+  async wait(opts?: { timeoutMs?: number }): Promise<TeamMessage | null> {
+    const maxWaitMs = opts?.timeoutMs ?? 25_000;
+    const currentUnixTime = Date.now();
+    const raw = await callTool("coral_wait_for_message", { currentUnixTime, maxWaitMs });
     const parsed = parseToolResult(raw);
-    const messages: TeamMessage[] = Array.isArray(parsed) ? (parsed as TeamMessage[]) : [];
-    for (const m of messages) {
-      const ts = new Date(m.timestamp).getTime();
-      if (ts > lastSeenTs) lastSeenTs = ts;
-    }
-    return messages;
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as TeamMessage;
   },
 
   async createThread(name: string, participants: string[]): Promise<TeamThread> {

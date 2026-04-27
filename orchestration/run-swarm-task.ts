@@ -39,7 +39,10 @@ type RunOptions = {
 type WaitState = Map<string, "waiting" | "active" | "stopped">;
 
 const DEFAULT_INSTANCES: AgentInstanceSpec[] = [{ name: "agent-A" }, { name: "agent-B" }];
-const DEFAULT_MODEL = "deepseek/deepseek-v4-flash";
+// Model label — kept in sync with the literal in team-swarm/shared/run-agent.ts.
+// Currently using Kimi K2-0905 while the DeepSeek upstream is degraded; see
+// feedback_openrouter-deepseek-blacklist.md.
+const DEFAULT_MODEL = "moonshotai/kimi-k2-0905";
 
 function timestampPrefix(): string {
   const d = new Date();
@@ -308,7 +311,11 @@ export async function runSwarmTask(input: {
       }
     });
 
-    // Step 7: stop polling loop
+    // Step 7: stop polling loop.
+    // Acceptance is polled independently of agent state — agents inside
+    // run_typescript don't emit Coral's native agent_wait_* events (the wait
+    // is an MCP tool call, not the runtime), so a "all-waiting" gate would
+    // never trigger. Poll the sandbox for the acceptance condition every 5s.
     const accept = opts.accept ?? defaultAccept;
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));
@@ -325,17 +332,14 @@ export async function runSwarmTask(input: {
         acceptanceResult = { passed: false };
         break;
       }
-      const allWaiting = states.every((v) => v === "waiting");
-      if (allWaiting) {
-        const passed = await accept(sandboxId, waitState).catch((e) => {
-          errors.push(`accept: ${(e as Error).message}`);
-          return false;
-        });
-        if (passed) {
-          exitReason = "accepted";
-          acceptanceResult = { passed: true };
-          break;
-        }
+      const passed = await accept(sandboxId, waitState).catch((e) => {
+        errors.push(`accept: ${(e as Error).message}`);
+        return false;
+      });
+      if (passed) {
+        exitReason = "accepted";
+        acceptanceResult = { passed: true };
+        break;
       }
     }
 
