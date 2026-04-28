@@ -6,6 +6,8 @@
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
+  AgentTrace,
+  AgentTraceIter,
   Manifest,
   RunDetail,
   RunSummary,
@@ -99,6 +101,29 @@ export function listRuns(): RunSummary[] {
   return summaries;
 }
 
+function readAgentTraces(runDirPath: string): AgentTrace[] {
+  const agentsDir = join(runDirPath, "agents");
+  if (!existsSync(agentsDir)) return [];
+  let entries: string[];
+  try {
+    entries = readdirSync(agentsDir, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith(".jsonl"))
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const traces: AgentTrace[] = [];
+  for (const file of entries) {
+    const agent = file.replace(/\.jsonl$/, "");
+    const iters = readJsonlLines<AgentTraceIter>(join(agentsDir, file));
+    iters.sort((a, b) => a.iter - b.iter);
+    traces.push({ agent, iters });
+  }
+  // Stable order by agent name so the UI is deterministic across reloads.
+  traces.sort((a, b) => (a.agent < b.agent ? -1 : a.agent > b.agent ? 1 : 0));
+  return traces;
+}
+
 export function getRun(id: string): RunDetail | null {
   // Defensive: reject ids with path separators to prevent traversal.
   if (id.includes("/") || id.includes("\\") || id.includes("..")) return null;
@@ -113,6 +138,7 @@ export function getRun(id: string): RunDetail | null {
     join(runDirPath, "transcript.jsonl")
   );
   const events = readJsonlLines<SessionEvent>(join(runDirPath, "events.jsonl"));
+  const agentTraces = readAgentTraces(runDirPath);
 
   let finalSnapshot: unknown | null = null;
   const snapPath = join(runDirPath, "final-snapshot.json");
@@ -124,5 +150,5 @@ export function getRun(id: string): RunDetail | null {
     }
   }
 
-  return { id, manifest, transcript, events, finalSnapshot };
+  return { id, manifest, transcript, events, agentTraces, finalSnapshot };
 }

@@ -1,9 +1,70 @@
 <script lang="ts">
   import type { PageProps } from "./$types";
-  import type { SessionEvent } from "$lib/types";
+  import type { AgentStep, AgentTraceIter, SessionEvent } from "$lib/types";
 
   let { data }: PageProps = $props();
   const run = $derived(data.run);
+
+  // ---- reasoning helpers ----
+
+  function formatMs(ms?: number): string {
+    if (ms == null) return "—";
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  function formatTokens(usage?: { totalTokens?: number }): string {
+    return usage?.totalTokens != null ? `${usage.totalTokens.toLocaleString()} tok` : "—";
+  }
+
+  function stepHeadline(step: AgentStep): string {
+    const tc = step.toolCalls?.[0];
+    if (!tc) return step.text ? `text: ${step.text.slice(0, 80)}` : "(no action)";
+    const code = tc.args?.code;
+    if (typeof code === "string") {
+      // First non-empty, non-comment line of code.
+      const firstLine =
+        code
+          .split("\n")
+          .map((l) => l.trim())
+          .find((l) => l.length > 0 && !l.startsWith("//")) ?? "";
+      return firstLine.length > 110 ? firstLine.slice(0, 110) + "…" : firstLine;
+    }
+    return tc.toolName ?? "(unknown tool)";
+  }
+
+  function resultStdout(step: AgentStep): string {
+    const r = step.toolResults?.[0]?.result as
+      | { stdout?: string; stderr?: string; exitCode?: number }
+      | undefined;
+    if (!r) return "";
+    const exit = r.exitCode != null ? `exit=${r.exitCode}` : "";
+    const out = (r.stdout ?? "").trim();
+    const err = (r.stderr ?? "").trim();
+    const head = out || err;
+    const headTrunc = head.length > 200 ? head.slice(0, 200) + "…" : head;
+    return [exit, headTrunc].filter(Boolean).join(" · ");
+  }
+
+  function fullCode(step: AgentStep): string | null {
+    const c = step.toolCalls?.[0]?.args?.code;
+    return typeof c === "string" ? c : null;
+  }
+
+  function fullResult(step: AgentStep): string {
+    const r = step.toolResults?.[0]?.result;
+    if (r == null) return "";
+    if (typeof r === "string") return r;
+    return JSON.stringify(r, null, 2);
+  }
+
+  function iterHeadline(it: AgentTraceIter): string {
+    const dur = formatMs(it.durationMs);
+    const tokens = formatTokens(it.usage);
+    const fr = it.finishReason ?? "—";
+    const steps = `${it.steps.length} steps`;
+    return `iter ${it.iter} · ${dur} · ${tokens} · ${steps} · ${fr}`;
+  }
 
   // ---- transcript helpers ----
 
@@ -173,6 +234,102 @@
           </li>
         {/each}
       </ol>
+    </details>
+
+    <details class="reasoning-block">
+      <summary>
+        <span>Reasoning timeline</span>
+        <span class="muted dim">
+          ({run.agentTraces.length} agents,
+          {run.agentTraces.reduce((n, t) => n + t.iters.length, 0)} iters,
+          {run.agentTraces.reduce(
+            (n, t) => n + t.iters.reduce((m, it) => m + it.steps.length, 0),
+            0
+          )} steps)
+        </span>
+      </summary>
+
+      {#if run.agentTraces.length === 0}
+        <p class="muted dim trace-empty">No agent traces captured for this run.</p>
+      {:else}
+        <div class="trace-agents">
+          {#each run.agentTraces as trace (trace.agent)}
+            <div class="trace-agent">
+              <h3 class="trace-agent-h">
+                <span class="sender" style:color={senderColor(trace.agent)}>{trace.agent}</span>
+                <span class="muted dim">({trace.iters.length} iters)</span>
+              </h3>
+              {#each trace.iters as it (it.iter)}
+                <details class="iter" open={true}>
+                  <summary>
+                    <span class="dim mono">{formatTime(it.ts)}</span>
+                    <span>{iterHeadline(it)}</span>
+                  </summary>
+                  <ol class="steps">
+                    {#each it.steps as step, sIdx (sIdx)}
+                      <li class="step">
+                        <details>
+                          <summary class="step-h">
+                            <span class="step-badge">{step.stepType ?? "?"}</span>
+                            <span class="step-tool muted mono">
+                              {step.toolCalls?.[0]?.toolName ?? "—"}
+                            </span>
+                            <span class="step-line mono">{stepHeadline(step)}</span>
+                            {#if resultStdout(step)}
+                              <span class="step-result dim mono">→ {resultStdout(step)}</span>
+                            {/if}
+                          </summary>
+                          <div class="step-body">
+                            {#if step.text}
+                              <div class="step-section">
+                                <div class="step-section-h">text</div>
+                                <pre class="step-pre">{step.text}</pre>
+                              </div>
+                            {/if}
+                            {#if step.reasoning}
+                              <div class="step-section">
+                                <div class="step-section-h">reasoning</div>
+                                <pre class="step-pre">{step.reasoning}</pre>
+                              </div>
+                            {/if}
+                            {#if step.reasoningDetails}
+                              <div class="step-section">
+                                <div class="step-section-h">reasoningDetails</div>
+                                <pre class="step-pre dim">{JSON.stringify(
+                                    step.reasoningDetails,
+                                    null,
+                                    2
+                                  )}</pre>
+                              </div>
+                            {/if}
+                            {#if fullCode(step) != null}
+                              <div class="step-section">
+                                <div class="step-section-h">tool call · code</div>
+                                <pre class="step-pre code">{fullCode(step)}</pre>
+                              </div>
+                            {/if}
+                            {#if step.toolResults?.[0]?.result != null}
+                              <div class="step-section">
+                                <div class="step-section-h">tool result</div>
+                                <pre class="step-pre dim">{fullResult(step)}</pre>
+                              </div>
+                            {/if}
+                            <div class="step-meta dim mono">
+                              finishReason: {step.finishReason ?? "—"} · usage: {formatTokens(
+                                step.usage
+                              )}
+                            </div>
+                          </div>
+                        </details>
+                      </li>
+                    {/each}
+                  </ol>
+                </details>
+              {/each}
+            </div>
+          {/each}
+        </div>
+      {/if}
     </details>
   </section>
 
@@ -470,5 +627,178 @@
     white-space: pre-wrap;
     word-break: break-word;
     margin: 0;
+  }
+
+  /* ---- reasoning timeline ---- */
+  .reasoning-block {
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    padding: 12px 14px;
+  }
+  .reasoning-block summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-weight: 600;
+    color: var(--fg-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .reasoning-block > summary::-webkit-details-marker {
+    display: none;
+  }
+  .reasoning-block > summary::before {
+    content: "▸";
+    font-size: 10px;
+    color: var(--fg-dim);
+    transition: transform 0.15s ease;
+    display: inline-block;
+  }
+  .reasoning-block[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .trace-empty {
+    margin-top: 12px;
+  }
+  .trace-agents {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    margin-top: 14px;
+  }
+  .trace-agent-h {
+    font-size: 12.5px;
+    font-weight: 600;
+    margin: 0 0 8px 0;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--fg);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .iter {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elevated-2);
+    padding: 8px 10px;
+    margin-bottom: 6px;
+  }
+  .iter > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--fg);
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .iter > summary::-webkit-details-marker {
+    display: none;
+  }
+  .iter > summary::before {
+    content: "▸";
+    font-size: 10px;
+    color: var(--fg-dim);
+    transition: transform 0.15s ease;
+    display: inline-block;
+  }
+  .iter[open] > summary::before {
+    transform: rotate(90deg);
+  }
+  .steps {
+    list-style: none;
+    padding: 8px 0 0 18px;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .step > details > summary {
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .step > details > summary::-webkit-details-marker {
+    display: none;
+  }
+  .step-badge {
+    background: var(--bg-elevated);
+    color: var(--fg-muted);
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 10.5px;
+    font-family: var(--mono);
+    flex-shrink: 0;
+  }
+  .step-tool {
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+  .step-line {
+    color: var(--fg);
+    font-size: 11.5px;
+    flex: 0 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .step-result {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    font-size: 11px;
+  }
+  .step-body {
+    padding: 8px 0 4px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-left: 2px solid var(--border);
+    margin: 6px 0 4px 0;
+  }
+  .step-section-h {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    margin-bottom: 3px;
+  }
+  .step-pre {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--fg);
+    max-height: 320px;
+    overflow: auto;
+  }
+  .step-pre.code {
+    background: var(--bg);
+  }
+  .step-meta {
+    font-size: 10.5px;
+    margin-top: 2px;
   }
 </style>

@@ -35,15 +35,39 @@
     return "";
   }
 
+  function runModels(run: RunSummary): string[] {
+    return Array.from(new Set(run.manifest.instances.map((i) => i.model)));
+  }
+
   function uniqueModels(run: RunSummary): string {
-    const models = Array.from(new Set(run.manifest.instances.map((i) => i.model)));
-    return models.join(", ");
+    return runModels(run).join(", ");
+  }
+
+  // Filter chips: union of every model used across all visible runs, sorted.
+  const allModels = $derived(
+    Array.from(new Set(data.runs.flatMap((r) => runModels(r)))).sort()
+  );
+
+  // null = no filter (show all). Single-select per user spec.
+  let selectedModel = $state<string | null>(null);
+
+  const visibleRuns = $derived(
+    selectedModel == null
+      ? data.runs
+      : data.runs.filter((r) => runModels(r).includes(selectedModel as string))
+  );
+
+  function pickModel(m: string | null): void {
+    selectedModel = selectedModel === m ? null : m;
   }
 </script>
 
 <div class="header-row">
   <h1>Runs</h1>
-  <span class="muted">{data.runs.length} total</span>
+  <span class="muted">
+    {visibleRuns.length}
+    {#if selectedModel != null}of {data.runs.length}{:else}total{/if}
+  </span>
 </div>
 
 {#if data.runs.length === 0}
@@ -55,6 +79,26 @@
     </p>
   </div>
 {:else}
+  {#if allModels.length > 1}
+    <div class="model-filter">
+      <span class="filter-label">Model</span>
+      <button
+        class={`chip ${selectedModel == null ? "active" : ""}`}
+        onclick={() => pickModel(null)}
+      >
+        all
+      </button>
+      {#each allModels as m (m)}
+        <button
+          class={`chip ${selectedModel === m ? "active" : ""}`}
+          onclick={() => pickModel(m)}
+        >
+          {m}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   <div class="table-wrap">
     <table>
       <thead>
@@ -70,7 +114,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each data.runs as run (run.id)}
+        {#each visibleRuns as run (run.id)}
           <tr>
             <td>
               {#if run.active}
@@ -159,5 +203,41 @@
   }
   tbody tr:hover {
     background: var(--bg-elevated-2);
+  }
+
+  /* ---- model filter ---- */
+  .model-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin: 0 0 14px 0;
+  }
+  .filter-label {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    color: var(--fg-muted);
+    margin-right: 4px;
+  }
+  .chip {
+    background: transparent;
+    color: var(--fg-muted);
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11.5px;
+    font-family: var(--mono);
+    cursor: pointer;
+  }
+  .chip:hover {
+    background: var(--bg-elevated-2);
+    color: var(--fg);
+  }
+  .chip.active {
+    background: var(--bg-elevated-2);
+    color: var(--accent);
+    border-color: var(--accent-dim);
   }
 </style>
