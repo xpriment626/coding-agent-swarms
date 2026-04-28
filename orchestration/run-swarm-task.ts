@@ -223,6 +223,31 @@ export async function runSwarmTask(input: {
       }
     }
     if (sandboxId) {
+      // Export /workspace before destroying — sandbox death = artifact loss.
+      // Failure logs to errors[] but does NOT block destroy: leak avoidance
+      // outranks artifact retrieval (per orchestrator-cleanup-discipline rule).
+      // Resolve script path via import.meta.url so cwd is irrelevant — same
+      // pattern as BINDINGS_DIR in run-agent.ts.
+      const exportScript = new URL("./export-sandbox.sh", import.meta.url).pathname;
+      try {
+        const proc = Bun.spawn({
+          cmd: [exportScript, sandboxId],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const exitCode = await proc.exited;
+        if (exitCode !== 0) {
+          const stderr = await new Response(proc.stderr).text();
+          errors.push(`export-sandbox.sh exit=${exitCode}: ${stderr.slice(0, 500)}`);
+        } else {
+          const stdout = await new Response(proc.stdout).text();
+          const m = stdout.match(/output: (.+)/);
+          if (m && m[1]) console.error(`[runner] workspace exported to ${m[1].trim()}`);
+        }
+      } catch (e) {
+        errors.push(`export-sandbox.sh spawn: ${(e as Error).message}`);
+      }
+
       try {
         await destroySandbox(sandboxId);
       } catch (e) {
