@@ -34,6 +34,7 @@ type RunOptions = {
   maxWallClockMs?: number;
   teamContext?: boolean;
   runDir?: string;
+  solo?: boolean;
 };
 
 type WaitState = Map<string, "waiting" | "active" | "stopped">;
@@ -41,6 +42,41 @@ type WaitState = Map<string, "waiting" | "active" | "stopped">;
 const DEFAULT_INSTANCES: AgentInstanceSpec[] = [{ name: "agent-A" }, { name: "agent-B" }];
 // Model label — kept in sync with the literal in team-swarm/shared/run-agent.ts.
 const DEFAULT_MODEL = "moonshotai/kimi-k2.6";
+
+// System prompt for --solo runs. Replaces the team-shaped default declared in
+// coral-agent.toml. Keeps the run_typescript / daytona binding framing; drops
+// everything about team-room, peer comms, kick-off, thread discipline.
+const SOLO_SYSTEM_PROMPT = `You are an engineer working solo in a Daytona workspace at /workspace.
+
+# Your only tool
+
+You have exactly ONE tool: \`run_typescript({ code: string })\`. It executes
+TypeScript in a Bun subprocess and returns \`{ stdout, stderr, exitCode }\`.
+Every action you want to take — reading or writing files in the sandbox,
+running shell commands — is done by writing TypeScript inside the \`code\`
+argument and calling \`run_typescript\`.
+
+There is NO separate \`daytona\` tool. It is a JavaScript identifier
+available inside \`code\`, not a tool you can call directly.
+
+# Bindings available inside \`code\`
+
+One pre-loaded object:
+
+\`\`\`ts
+// Workspace I/O — operates on /workspace in your Daytona sandbox.
+daytona.read(path: string): Promise<string>
+daytona.write(path: string, content: string): Promise<void>
+daytona.exec(cmd: string, opts?: { cwd?: string; timeout?: number }): Promise<{stdout, stderr, exitCode}>
+daytona.list(path: string): Promise<string[]>
+\`\`\`
+
+# Approach
+
+Done-ness is judged by an external review of what you produce in /workspace.
+Work iteratively — write code, run it, fix what's broken, then move on.
+Do not ask for confirmation between steps; just keep working until the
+external reviewer would consider the artifact in /workspace complete.`;
 
 function timestampPrefix(): string {
   const d = new Date();
@@ -69,7 +105,8 @@ function buildSessionSpec(
   instances: AgentInstanceSpec[],
   sandboxId: string,
   teamContext: boolean,
-  runDirAbs: string
+  runDirAbs: string,
+  solo: boolean
 ): SessionSpec {
   const requireEnvVar = (name: string): string => {
     const v = process.env[name];
@@ -100,6 +137,15 @@ function buildSessionSpec(
         DAYTONA_API_KEY: { type: "string" as const, value: daytonaKey },
         DAYTONA_SANDBOX_ID: { type: "string" as const, value: sandboxId },
         RUN_DIR: { type: "string" as const, value: runDirAbs },
+        ...(solo
+          ? {
+              SOLO_MODE: { type: "string" as const, value: "1" },
+              EXTRA_SYSTEM_PROMPT: {
+                type: "string" as const,
+                value: SOLO_SYSTEM_PROMPT,
+              },
+            }
+          : {}),
       },
     };
   });
@@ -141,11 +187,13 @@ export async function runSwarmTask(input: {
   options?: RunOptions;
 }): Promise<TaskResult> {
   const startedAt = Date.now();
-  const instances = input.instances ?? DEFAULT_INSTANCES;
+  const instances =
+    input.instances ?? (input.options?.solo ? [{ name: "agent" }] : DEFAULT_INSTANCES);
   const opts: Required<Omit<RunOptions, "accept">> & { accept?: RunOptions["accept"] } = {
     maxWallClockMs: input.options?.maxWallClockMs ?? 300_000,
-    teamContext: input.options?.teamContext ?? true,
+    teamContext: input.options?.solo ? false : (input.options?.teamContext ?? true),
     runDir: input.options?.runDir ?? "",
+    solo: input.options?.solo ?? false,
     accept: input.options?.accept,
   };
 
@@ -213,45 +261,57 @@ export async function runSwarmTask(input: {
     mkdirSync(join(runDirAbs, "agents"), { recursive: true });
 
     // Step 3: session
-    const spec = buildSessionSpec(input.task, instances, sandboxId, opts.teamContext, runDirAbs);
+    const spec = buildSessionSpec(
+      input.task,
+      instances,
+      sandboxId,
+      opts.teamContext,
+      runDirAbs,
+      opts.solo
+    );
     ({ namespace: ns, sessionId: sid } = await createSession(spec));
     console.error(`[runner] session=${ns}/${sid}`);
 
-    // Step 4: team-room thread (with one retry).
-    // Puppet must be in participants — it's the implicit sender for any
-    // messages we drive from the operator side.
-    let teamRoomThreadId: string | undefined;
-    const tryCreateThread = async (): Promise<string> => {
-      const { threadId } = await puppetCreateThread(ns!, sid!, "team-room", [
-        ...instances.map((i) => i.name),
-        "puppet",
-      ]);
-      return threadId;
-    };
-    try {
-      teamRoomThreadId = await tryCreateThread();
-    } catch (e) {
-      console.error(
-        `[runner] puppetCreateThread first attempt failed: ${(e as Error).message}; retrying in 100ms`
-      );
-      await new Promise((r) => setTimeout(r, 100));
-      teamRoomThreadId = await tryCreateThread();
-    }
-    console.error(`[runner] team-room created: ${teamRoomThreadId}`);
+    // Step 4 + 4b: team-room thread + kick-off — only in pair (multi-agent) mode.
+    // Solo doesn't need a coordination thread; its task arrives via
+    // EXTRA_INITIAL_USER_PROMPT at session create.
+    if (!opts.solo) {
+      // Step 4: team-room thread (with one retry).
+      // Puppet must be in participants — it's the implicit sender for any
+      // messages we drive from the operator side.
+      let teamRoomThreadId: string | undefined;
+      const tryCreateThread = async (): Promise<string> => {
+        const { threadId } = await puppetCreateThread(ns!, sid!, "team-room", [
+          ...instances.map((i) => i.name),
+          "puppet",
+        ]);
+        return threadId;
+      };
+      try {
+        teamRoomThreadId = await tryCreateThread();
+      } catch (e) {
+        console.error(
+          `[runner] puppetCreateThread first attempt failed: ${(e as Error).message}; retrying in 100ms`
+        );
+        await new Promise((r) => setTimeout(r, 100));
+        teamRoomThreadId = await tryCreateThread();
+      }
+      console.error(`[runner] team-room created: ${teamRoomThreadId}`);
 
-    // Step 4b: kick-off message. Agents need the thread UUID to post back
-    // (coral_send_message uses threadId, not threadName). The seed prompt is
-    // fixed at session create — too early to know the threadId. So the puppet
-    // posts a kick-off mentioning every engineer; their first team.wait()
-    // surfaces this message, from which they can read message.threadId.
-    await puppetSendMessage(
-      ns!,
-      sid!,
-      teamRoomThreadId!,
-      `Welcome team. The task: ${input.task}\n\nThis thread (\`team-room\`) is your shared coordination channel — its id is in this message's metadata. Use team.wait() to receive teammate replies, team.post(threadId, ...) to send.`,
-      instances.map((i) => i.name)
-    );
-    console.error(`[runner] kick-off message posted`);
+      // Step 4b: kick-off message. Agents need the thread UUID to post back
+      // (coral_send_message uses threadId, not threadName). The seed prompt is
+      // fixed at session create — too early to know the threadId. So the puppet
+      // posts a kick-off mentioning every engineer; their first team.wait()
+      // surfaces this message, from which they can read message.threadId.
+      await puppetSendMessage(
+        ns!,
+        sid!,
+        teamRoomThreadId!,
+        `Welcome team. The task: ${input.task}\n\nThis thread (\`team-room\`) is your shared coordination channel — its id is in this message's metadata. Use team.wait() to receive teammate replies, team.post(threadId, ...) to send.`,
+        instances.map((i) => i.name)
+      );
+      console.error(`[runner] kick-off message posted`);
+    }
 
     // Step 5: manifest (runDir + agents/ already created in step 2b)
     const manifest = {
@@ -323,7 +383,8 @@ export async function runSwarmTask(input: {
     // run_typescript don't emit Coral's native agent_wait_* events (the wait
     // is an MCP tool call, not the runtime), so a "all-waiting" gate would
     // never trigger. Poll the sandbox for the acceptance condition every 5s.
-    const accept = opts.accept ?? defaultAccept;
+    const accept =
+      opts.accept ?? (opts.solo ? (async (): Promise<boolean> => false) : defaultAccept);
     while (true) {
       await new Promise((r) => setTimeout(r, 5_000));
       if (Date.now() - startedAt > opts.maxWallClockMs) {
@@ -402,18 +463,22 @@ async function defaultAccept(sandboxId: string, _state: WaitState): Promise<bool
 
 // CLI entry
 if (import.meta.main) {
-  const task = process.argv.slice(2).join(" ").trim();
+  const args = process.argv.slice(2);
+  const solo = args.includes("--solo");
+  const task = args.filter((a) => a !== "--solo").join(" ").trim();
   if (!task) {
-    console.error('usage: bun orchestration/run-swarm-task.ts "<task description>"');
+    console.error(
+      'usage: bun orchestration/run-swarm-task.ts [--solo] "<task description>"'
+    );
     console.error("env: MAX_WALLCLOCK_MS (default 300000)");
     process.exit(2);
   }
   const maxWallClockMs = process.env.MAX_WALLCLOCK_MS
     ? parseInt(process.env.MAX_WALLCLOCK_MS, 10)
     : undefined;
-  const result = await runSwarmTask({ task, options: { maxWallClockMs } });
+  const result = await runSwarmTask({ task, options: { maxWallClockMs, solo } });
   console.error(
-    `\n[runner] DONE — exitReason=${result.exitReason} durationMs=${result.durationMs} runDir=${result.runDir}`
+    `\n[runner] DONE — exitReason=${result.exitReason} durationMs=${result.durationMs} runDir=${result.runDir} solo=${solo}`
   );
   if (result.errors.length) {
     console.error(`[runner] errors:`);
