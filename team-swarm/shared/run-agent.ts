@@ -20,6 +20,7 @@ const INITIAL_USER_PROMPT = process.env.EXTRA_INITIAL_USER_PROMPT ?? "";
 const MODEL_API_KEY = process.env.MODEL_API_KEY;
 const RUN_DIR = process.env.RUN_DIR ?? "";
 const MODEL_SLUG = "moonshotai/kimi-k2.6";
+const SOLO_MODE = process.env.SOLO_MODE === "1";
 if (!MODEL_API_KEY) throw new Error("MODEL_API_KEY not set");
 
 // Per-iter trace JSONL — captures result.steps (reasoning + reasoningDetails +
@@ -45,7 +46,7 @@ const BINDINGS_DIR = new URL("../agent-bindings/", import.meta.url).pathname;
 const PRELUDE = `
 const __bindingsDir = ${JSON.stringify(BINDINGS_DIR)};
 const { daytona } = await import(__bindingsDir + "daytona.ts");
-const { team } = await import(__bindingsDir + "team.ts");
+${SOLO_MODE ? "" : `const { team } = await import(__bindingsDir + "team.ts");`}
 `;
 
 async function runBunSubprocess(
@@ -89,8 +90,9 @@ function preview(s: string, max: number): string {
 }
 
 const runTypescriptTool = tool({
-  description:
-    "Execute TypeScript with bindings: daytona, team. Returns {stdout, stderr, exitCode}.",
+  description: SOLO_MODE
+    ? "Execute TypeScript with bindings: daytona. Returns {stdout, stderr, exitCode}."
+    : "Execute TypeScript with bindings: daytona, team. Returns {stdout, stderr, exitCode}.",
   parameters: z.object({ code: z.string() }),
   execute: async ({ code }) => {
     const callStart = Date.now();
@@ -121,7 +123,9 @@ async function main(): Promise<void> {
     { role: "user", content: INITIAL_USER_PROMPT },
   ];
 
-  console.error(`[${AGENT_NAME}] booted, entering outer loop (RUN_DIR=${RUN_DIR || "<none>"})`);
+  console.error(
+    `[${AGENT_NAME}] booted (solo=${SOLO_MODE}), entering outer loop (RUN_DIR=${RUN_DIR || "<none>"})`
+  );
 
   let iter = 0;
   // eslint-disable-next-line no-constant-condition
