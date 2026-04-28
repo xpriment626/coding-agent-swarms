@@ -6,12 +6,12 @@
 # Usage:
 #   ./orchestration/export-sandbox.sh <sandbox-id> [<output-dir>]
 #
-# Default output dir: /Users/bambozlor/Desktop/sandbox-out/<timestamp>
+# Default output dir: $HOME/sandbox-out/<timestamp>
 
 set -euo pipefail
 
 SANDBOX_ID="${1:?usage: export-sandbox.sh <sandbox-id> [output-dir]}"
-OUTPUT_DIR="${2:-/Users/bambozlor/Desktop/sandbox-out/$(date +%Y%m%d-%H%M%S)}"
+OUTPUT_DIR="${2:-${HOME}/sandbox-out/$(date +%Y%m%d-%H%M%S)}"
 
 cd "$(dirname "$0")/.."
 
