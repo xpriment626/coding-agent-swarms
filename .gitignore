@@ -33,3 +33,4 @@ node_modules/
 # routes/runs/[id]/ directory that should be tracked.
 /runs/
 bun.lockb
+.java-version
