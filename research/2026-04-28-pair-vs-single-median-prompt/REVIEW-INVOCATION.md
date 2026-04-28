@@ -12,10 +12,10 @@ Your job is to determine which arm's output is **less bad**, score both against 
 
 1. `research/2026-04-28-pair-vs-single-median-prompt/PROMPT.md` — the project prompt both arms received. This is the only ground truth for "what was asked."
 2. `research/2026-04-28-pair-vs-single-median-prompt/RUBRIC.md` — your scoring rubric, the dimensions, the task-specific danger zones, and the required output format. Follow it precisely.
-3. `research/2026-04-28-pair-vs-single-median-prompt/pair/<PAIR_RUN_ID>/code/` — the pair arm's exported `/workspace`. This is the artifact a hypothetical user would walk away with.
-4. `research/2026-04-28-pair-vs-single-median-prompt/single/<SINGLE_RUN_ID>/code/` — the single arm's exported `/workspace`.
-5. `research/2026-04-28-pair-vs-single-median-prompt/pair/<PAIR_RUN_ID>/trace/agent-A.jsonl` and `agent-B.jsonl` — per-iteration reasoning traces for the pair arm. JSONL where each line is one outer agent iteration. Each line has `agent`, `iter`, `model`, `durationMs`, `finishReason`, `usage`, and `steps[]`. Each step has `stepType`, `text`, `reasoning`, `reasoningDetails[]`, `toolCalls[]`. Read `reasoning` and `reasoningDetails[].text` to see what the agent was actually thinking before each tool call.
-6. `research/2026-04-28-pair-vs-single-median-prompt/single/<SINGLE_RUN_ID>/trace/agent.jsonl` — same shape for the single arm.
+3. `research/2026-04-28-pair-vs-single-median-prompt/pair/20260428-203716-c04e2736/code/` — the pair arm's exported `/workspace`. This is the artifact a hypothetical user would walk away with.
+4. `research/2026-04-28-pair-vs-single-median-prompt/single/20260428-201631-990c5bb8/code/` — the single arm's exported `/workspace`.
+5. `research/2026-04-28-pair-vs-single-median-prompt/pair/20260428-203716-c04e2736/trace/agents/agent-A.jsonl` and `agents/agent-B.jsonl` — per-iteration reasoning traces for the pair arm. JSONL where each line is one outer agent iteration. Each line has `agent`, `iter`, `model`, `durationMs`, `finishReason`, `usage`, and `steps[]`. Each step has `stepType`, `text`, `reasoning`, `reasoningDetails[]`, `toolCalls[]`. Read `reasoning` and `reasoningDetails[].text` to see what the agent was actually thinking before each tool call. The pair arm's `trace/transcript.jsonl` and `trace/events.jsonl` capture the inter-agent message log and full Coral session event stream respectively — useful for grounding mid-flight observations in actual exchanges.
+6. `research/2026-04-28-pair-vs-single-median-prompt/single/20260428-201631-990c5bb8/trace/agents/agent.jsonl` — same shape for the single arm. (Solo has no `transcript.jsonl` or `events.jsonl` — there's no thread to log; this is expected, not a missing artifact.)
 
 The traces are essential. Artifact-only review tells you which arm shipped better code; trace-grounded review tells you *why*, and is the only way to credit the pair pattern for catches that happened during the work.
 
