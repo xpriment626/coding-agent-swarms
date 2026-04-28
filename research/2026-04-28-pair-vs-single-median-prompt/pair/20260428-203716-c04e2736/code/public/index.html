@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>URL Shortener</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔗 URL Shortener</h1>
+      <p>Shorten your links and track their performance</p>
+    </header>
+
+    <main>
+      <section class="shorten-section">
+        <form id="shorten-form">
+          <input 
+            type="url" 
+            id="url-input" 
+            placeholder="Paste your long URL here..." 
+            required
+          >
+          <button type="submit">Shorten</button>
+        </form>
+        <div id="result" class="hidden">
+          <p>Your short link:</p>
+          <div class="short-link-box">
+            <input type="text" id="short-link" readonly>
+            <button id="copy-btn">Copy</button>
+          </div>
+        </div>
+        <p id="error" class="error hidden"></p>
+      </section>
+
+      <section class="dashboard-section">
+        <h2>📊 Dashboard</h2>
+        <div id="links-table-container">
+          <table id="links-table">
+            <thead>
+              <tr>
+                <th>Short Link</th>
+                <th>Original URL</th>
+                <th>Clicks</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="links-tbody">
+              <tr class="empty-row">
+                <td colspan="4">No links created yet</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Built with ❤️</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

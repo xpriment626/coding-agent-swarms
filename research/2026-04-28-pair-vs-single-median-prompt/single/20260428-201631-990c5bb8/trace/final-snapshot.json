@@ -1,0 +1,54 @@
+{
+  "base": {
+    "id": "6e3e5e12-73a8-43c3-9036-955b8eb136c2",
+    "timestamp": "2026-04-28T12:16:31.373654Z",
+    "namespace": "default",
+    "status": {
+      "type": "executed",
+      "executionTime": "2026-04-28T12:16:31.374798Z"
+    },
+    "annotations": {}
+  },
+  "agents": [
+    {
+      "name": "agent",
+      "registryAgentIdentifier": {
+        "name": "engineer",
+        "version": "0.1.0",
+        "registrySourceId": {
+          "type": "local"
+        }
+      },
+      "status": {
+        "type": "running",
+        "connectionStatus": {
+          "type": "not_connected"
+        },
+        "startTime": "2026-04-28T12:16:31.374826Z"
+      },
+      "description": "",
+      "links": [],
+      "annotations": {},
+      "tokensByModel": {}
+    },
+    {
+      "name": "puppet",
+      "registryAgentIdentifier": {
+        "name": "puppet",
+        "version": "1.0.0",
+        "registrySourceId": {
+          "type": "local"
+        }
+      },
+      "status": {
+        "type": "stopped",
+        "startTime": "2026-04-28T12:16:31.374916Z"
+      },
+      "description": "",
+      "links": [],
+      "annotations": {},
+      "tokensByModel": {}
+    }
+  ],
+  "threads": []
+}

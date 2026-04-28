@@ -1,0 +1,22 @@
+{
+  "namespace": "default",
+  "sessionId": "c49c8177-9907-4054-909b-1ee5fc7fb59e",
+  "sandboxId": "c04e2736-d3ef-4c24-b4d5-ef1981f7312b",
+  "instances": [
+    {
+      "name": "agent-A",
+      "model": "moonshotai/kimi-k2.6"
+    },
+    {
+      "name": "agent-B",
+      "model": "moonshotai/kimi-k2.6"
+    }
+  ],
+  "startedAt": "2026-04-28T12:37:14.789Z",
+  "endedAt": "2026-04-28T12:57:35.539Z",
+  "exitReason": "wallclock",
+  "acceptanceResult": {
+    "passed": false
+  },
+  "errors": []
+}
