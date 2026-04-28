@@ -10,7 +10,7 @@ import { generateText, tool } from "ai";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { z } from "zod";
 import { spawn } from "bun";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, appendFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,7 +18,23 @@ const AGENT_NAME = process.env.AGENT_NAME ?? "unknown-agent";
 const SYSTEM_PROMPT = process.env.EXTRA_SYSTEM_PROMPT ?? "";
 const INITIAL_USER_PROMPT = process.env.EXTRA_INITIAL_USER_PROMPT ?? "";
 const MODEL_API_KEY = process.env.MODEL_API_KEY;
+const RUN_DIR = process.env.RUN_DIR ?? "";
+const MODEL_SLUG = "moonshotai/kimi-k2.6";
 if (!MODEL_API_KEY) throw new Error("MODEL_API_KEY not set");
+
+// Per-iter trace JSONL — captures result.steps (reasoning + reasoningDetails +
+// tool calls/results inline per step), usage, finishReason. Best-effort writer:
+// a logging failure must never crash the agent.
+function writeTrace(line: Record<string, unknown>): void {
+  if (!RUN_DIR) return;
+  try {
+    const tracePath = join(RUN_DIR, "agents", `${AGENT_NAME}.jsonl`);
+    mkdirSync(join(RUN_DIR, "agents"), { recursive: true });
+    appendFileSync(tracePath, JSON.stringify(line) + "\n");
+  } catch (e) {
+    console.error(`[${AGENT_NAME}] writeTrace failed: ${(e as Error).message}`);
+  }
+}
 
 const openrouter = createOpenRouter({ apiKey: MODEL_API_KEY });
 
@@ -67,17 +83,35 @@ async function runBunSubprocess(
   }
 }
 
+function preview(s: string, max: number): string {
+  const flat = s.replace(/\n/g, "\\n");
+  return flat.length > max ? flat.slice(0, max) + "…" : flat;
+}
+
 const runTypescriptTool = tool({
   description:
     "Execute TypeScript with bindings: daytona, team. Returns {stdout, stderr, exitCode}.",
   parameters: z.object({ code: z.string() }),
   execute: async ({ code }) => {
+    const callStart = Date.now();
+    console.error(
+      `[${AGENT_NAME}] tool_call run_typescript codeLen=${code.length} code="${preview(code, 240)}"`
+    );
+    // Force-exit on success too: the MCP Streamable HTTP client holds an open
+    // connection that keeps the bun event loop alive even after user code
+    // completes. Without an explicit process.exit(0) the subprocess hangs
+    // until the SIGKILL timeout, costing ~90s per call.
     const fullCode =
       PRELUDE +
-      "\nawait (async () => {\n" +
+      "\n(async () => {\n" +
       code +
-      "\n})().catch((e) => { console.error(e?.stack ?? e); process.exit(1); });\n";
-    return await runBunSubprocess(fullCode, { timeoutMs: 90_000 });
+      "\n})().then(() => process.exit(0)).catch((e) => { console.error(e?.stack ?? e); process.exit(1); });\n";
+    const result = await runBunSubprocess(fullCode, { timeoutMs: 90_000 });
+    console.error(
+      `[${AGENT_NAME}] tool_result exitCode=${result.exitCode} durationMs=${Date.now() - callStart} ` +
+        `stdout="${preview(result.stdout, 300)}" stderr="${preview(result.stderr, 300)}"`
+    );
+    return result;
   },
 });
 
@@ -87,27 +121,50 @@ async function main(): Promise<void> {
     { role: "user", content: INITIAL_USER_PROMPT },
   ];
 
-  console.error(`[${AGENT_NAME}] booted, entering outer loop`);
+  console.error(`[${AGENT_NAME}] booted, entering outer loop (RUN_DIR=${RUN_DIR || "<none>"})`);
 
+  let iter = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    const iterStart = Date.now();
     const result = await generateText({
-      // Temporary swap: `deepseek/deepseek-v4-flash` is currently unusable for
-      // tool-calling — DeepSeek upstream is degraded (status:-5, 0% 30m uptime)
-      // and DeepInfra (the only other tool-capable provider) is rate-limiting
-      // OpenRouter's shared pool with HTTP 429. Kimi K2-0905 is auto-routed to
-      // Novita with tools support and is verified working in this account.
-      // Revert target: 2026-04-29. See feedback_openrouter-deepseek-blacklist.md.
-      model: openrouter("moonshotai/kimi-k2-0905"),
+      // Kimi K2.6 — Moonshot's agentic-reasoning-tuned variant. Picked over
+      // K2-0905 to test whether thread-discipline failures we saw last session
+      // were prompt/tool-surface-driven or model-reasoning-driven; structural
+      // bind-surface fix (no team.createThread) lands at the same time.
+      model: openrouter(MODEL_SLUG),
       tools: { run_typescript: runTypescriptTool },
-      maxSteps: 10,
+      // maxSteps 5 × subprocess timeout 90s = 7.5min worst case per outer iter.
+      // Empirically iters take 2-3min because most tool calls return well under
+      // the cap. Wallclock is the outer bound; agents typically get 2+ iters.
+      maxSteps: 5,
       // @ts-expect-error — ai package CoreMessage type is more permissive at runtime
       messages,
     });
     // @ts-expect-error — runtime shape includes responseMessages
     const responseMessages = result.responseMessages ?? [];
     messages.push(...responseMessages);
-    console.error(`[${AGENT_NAME}] outer iter complete, messages=${messages.length}`);
+
+    // Capture per-iter reasoning trace. result.steps gives per-step text,
+    // reasoning, reasoningDetails, toolCalls, toolResults — Phase 3 telemetry
+    // for the FE to render later.
+    writeTrace({
+      ts: new Date(iterStart).toISOString(),
+      agent: AGENT_NAME,
+      iter,
+      model: MODEL_SLUG,
+      durationMs: Date.now() - iterStart,
+      finishReason: result.finishReason,
+      usage: result.usage,
+      steps: result.steps ?? [],
+      text: result.text,
+    });
+
+    console.error(
+      `[${AGENT_NAME}] outer iter ${iter} complete, messages=${messages.length}, ` +
+        `steps=${result.steps?.length ?? 0}, finishReason=${result.finishReason}`
+    );
+    iter += 1;
   }
 }
 

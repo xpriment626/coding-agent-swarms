@@ -23,7 +23,7 @@ display.description = "Name assigned to this agent instance by the operator."
 [options.MODEL_API_KEY]
 type = "string"
 secret = true
-display.description = "OpenRouter API key (DeepSeek V4 Flash)."
+display.description = "OpenRouter API key — model is selected in run-agent.ts."
 
 [options.DAYTONA_API_KEY]
 type = "string"
@@ -33,6 +33,11 @@ display.description = "Daytona API key for the workspace toolbox."
 [options.DAYTONA_SANDBOX_ID]
 type = "string"
 display.description = "ID of the shared Daytona sandbox the team operates in."
+
+[options.RUN_DIR]
+type = "string"
+default = ""
+display.description = "Absolute path to runs/<id>/ for telemetry trace JSONL output. Empty disables capture."
 
 [options.EXTRA_SYSTEM_PROMPT]
 type = "string"
@@ -66,8 +71,16 @@ daytona.list(path: string): Promise<string[]>
 // Peer comms via Coral.
 team.post(threadId: string, content: string, mentions?: string[]): Promise<void>
 team.wait(opts?: { timeoutMs?: number }): Promise<TeamMessage | null>
-team.createThread(name: string, participants: string[]): Promise<{ id, name, participants }>
 ```
+
+# Thread discipline
+
+There is exactly ONE coordination thread for this team — the team-room. There
+is NO mechanism to create new threads. `team.createThread` does not exist; if
+you try to call it you'll get `TypeError: team.createThread is not a function`.
+Every `team.post(...)` you make MUST use the team-room threadId you learn from
+the kick-off message. Do not invent threadIds, do not paste UUIDs from
+imagination, and do not ask Coral to make new threads through any other route.
 
 # How to receive messages
 

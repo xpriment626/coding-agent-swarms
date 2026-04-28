@@ -7,7 +7,7 @@
 // after destroy. SIGINT/SIGTERM handlers force the same cleanup path.
 
 import { mkdirSync, appendFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   createSandbox,
   destroySandbox,
@@ -40,9 +40,7 @@ type WaitState = Map<string, "waiting" | "active" | "stopped">;
 
 const DEFAULT_INSTANCES: AgentInstanceSpec[] = [{ name: "agent-A" }, { name: "agent-B" }];
 // Model label — kept in sync with the literal in team-swarm/shared/run-agent.ts.
-// Currently using Kimi K2-0905 while the DeepSeek upstream is degraded; see
-// feedback_openrouter-deepseek-blacklist.md.
-const DEFAULT_MODEL = "moonshotai/kimi-k2-0905";
+const DEFAULT_MODEL = "moonshotai/kimi-k2.6";
 
 function timestampPrefix(): string {
   const d = new Date();
@@ -70,7 +68,8 @@ function buildSessionSpec(
   task: string,
   instances: AgentInstanceSpec[],
   sandboxId: string,
-  teamContext: boolean
+  teamContext: boolean,
+  runDirAbs: string
 ): SessionSpec {
   const requireEnvVar = (name: string): string => {
     const v = process.env[name];
@@ -100,6 +99,7 @@ function buildSessionSpec(
         MODEL_API_KEY: { type: "string" as const, value: modelKey },
         DAYTONA_API_KEY: { type: "string" as const, value: daytonaKey },
         DAYTONA_SANDBOX_ID: { type: "string" as const, value: sandboxId },
+        RUN_DIR: { type: "string" as const, value: runDirAbs },
       },
     };
   });
@@ -203,8 +203,17 @@ export async function runSwarmTask(input: {
     // Step 2: prewarm
     await prewarmWorkspace(sandboxId);
 
+    // Step 2b: resolve runDir to absolute path BEFORE session create.
+    // Agents need RUN_DIR injected via session options at spawn time so they
+    // can write per-iter reasoning traces to runs/<id>/agents/<name>.jsonl.
+    // Suffix uses sandboxId.slice(0,8) instead of sid.slice(0,8) because the
+    // session id only exists after createSession — chicken-and-egg.
+    if (!runDir) runDir = `runs/${timestampPrefix()}-${sandboxId.slice(0, 8)}`;
+    const runDirAbs = resolve(process.cwd(), runDir);
+    mkdirSync(join(runDirAbs, "agents"), { recursive: true });
+
     // Step 3: session
-    const spec = buildSessionSpec(input.task, instances, sandboxId, opts.teamContext);
+    const spec = buildSessionSpec(input.task, instances, sandboxId, opts.teamContext, runDirAbs);
     ({ namespace: ns, sessionId: sid } = await createSession(spec));
     console.error(`[runner] session=${ns}/${sid}`);
 
@@ -244,9 +253,7 @@ export async function runSwarmTask(input: {
     );
     console.error(`[runner] kick-off message posted`);
 
-    // Step 5: run dir + manifest
-    if (!runDir) runDir = `runs/${timestampPrefix()}-${sid.slice(0, 8)}`;
-    mkdirSync(runDir, { recursive: true });
+    // Step 5: manifest (runDir + agents/ already created in step 2b)
     const manifest = {
       namespace: ns,
       sessionId: sid,
@@ -398,9 +405,13 @@ if (import.meta.main) {
   const task = process.argv.slice(2).join(" ").trim();
   if (!task) {
     console.error('usage: bun orchestration/run-swarm-task.ts "<task description>"');
+    console.error("env: MAX_WALLCLOCK_MS (default 300000)");
     process.exit(2);
   }
-  const result = await runSwarmTask({ task });
+  const maxWallClockMs = process.env.MAX_WALLCLOCK_MS
+    ? parseInt(process.env.MAX_WALLCLOCK_MS, 10)
+    : undefined;
+  const result = await runSwarmTask({ task, options: { maxWallClockMs } });
   console.error(
     `\n[runner] DONE — exitReason=${result.exitReason} durationMs=${result.durationMs} runDir=${result.runDir}`
   );
