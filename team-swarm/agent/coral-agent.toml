@@ -39,6 +39,11 @@ type = "string"
 default = ""
 display.description = "Absolute path to runs/<id>/ for telemetry trace JSONL output. Empty disables capture."
 
+[options.SOLO_MODE]
+type = "string"
+default = ""
+display.description = "When set to '1', the agent omits the team binding and runs solo with no peer comms."
+
 [options.EXTRA_SYSTEM_PROMPT]
 type = "string"
 display.multiline = true
