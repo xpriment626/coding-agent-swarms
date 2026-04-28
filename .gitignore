@@ -34,3 +34,4 @@ node_modules/
 /runs/
 bun.lockb
 .java-version
+RUN-MANIFEST.md
