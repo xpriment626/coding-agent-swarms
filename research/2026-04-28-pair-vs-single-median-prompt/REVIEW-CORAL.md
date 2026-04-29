@@ -1,10 +1,12 @@
 # Coral-context review — pair-vs-single, URL-shortener experiment
 
-> **Companion to `REVIEW.md`.** GPT-5.5 reviewed the artifacts impartially with no Coral / project context. This file is the opposite: a project-side analysis of *why* the pair coordinated badly, anchored in specific moments in the trace, with attention to what's fixable at the Coral binding layer, what's a prompt issue, and what's model-side and out of reach. No re-application of the rubric — this is failure-mode forensics.
+> **Companion to `REVIEW.md`.** GPT-5.5 reviewed the artifacts impartially with no Coral / project context. This file is the opposite: a substrate-side analysis of *why* the pair coordinated badly, anchored in specific moments in the trace. **Scope is intentionally narrow:** observations of what failed in this run + which native Coral primitives, had they been used, would have addressed each failure. Recommendations for binding rewrites, prompt reframes, custom server tools, or product-level architecture changes are out of scope — they're conversation topics, not findings about the substrate.
 
 ## TL;DR
 
-The pair pattern didn't get a fair test in this run because **the thread died after iter 0**. Agent-B posted its two replies without `mentions`, agent-A's `team.wait` (which uses `coral_wait_for_mention` under the hood) never surfaced them, agent-A concluded the thread was empty, and from there both agents coordinated through the **filesystem** — reading each other's `/workspace` writes — instead of the thread. The defects both agents privately identified in iter 7 (open redirect) never reached shared state because shared state, by then, had no reader. This is fixable at the binding layer, mostly without prompt changes, and is the highest-leverage thing to address before the next run.
+The pair pattern didn't get a fair test in this run because **the thread died after iter 0**. Agent-B posted its two replies without `mentions`, agent-A's `team.wait` (mention-filtered) silenced them, and from there both agents fell back to coordinating through filesystem state instead of the thread. The defects both agents privately identified at iter 7 (open redirect) never reached shared state because shared state had no reader.
+
+The substrate had remedies we never used. Coral exposes a built-in **`coral://state` MCP resource** that returns the agent's full participation-scoped thread view — including non-mention messages — and a **`coral_wait_for_agent`** tool that blocks for messages from a specific named peer regardless of mention discipline. Either one, surfaced through the binding, would have given agent-A a single-call recovery path the moment its first wait returned null. Neither was on the per-agent MCP surface our `team.ts` binding exposes.
 
 ## Headline finding: thread death at iter 0
 
@@ -28,8 +30,6 @@ After iter 1, the thread is functionally dead. Both agents continue calling `tea
 
 **Citation:** `agents/agent-B.jsonl` iter 0 step 1 and step 3. `transcript.jsonl` lines 2-3 (`mentions=[]`).
 
-**Layer:** Binding. Fixable without prompt changes.
-
 ### F2 — `team.wait` is a mention-filter, not a "what happened on the thread" primitive
 
 **What happened:** Agent-A repeatedly called `team.wait` and got null when there *were* messages on the thread, just not mention-tagged for agent-A. The agent had no way to inspect thread state without waiting for someone to remember to mention it.
@@ -38,17 +38,13 @@ After iter 1, the thread is functionally dead. Both agents continue calling `tea
 
 **Citation:** `agents/agent-A.jsonl` iter 1 steps 0-2; iter 7 step 4 (still calling `team.wait` 6 iters later, still getting null).
 
-**Layer:** Binding. Coral exposes `coral_list_messages` (or equivalent) which would back this; the binding just doesn't surface it.
-
 ### F3 — ThreadId lives only in agent-side state, lost between iters
 
 **What happened:** Agent-B iter 1 step 0 reasoning: *"My first action should be to check the kick-off message from the team-room thread."* Agent-B *already had the threadId* in iter 0 — it saved it as `const threadId = "98b6eea1-..."` and used it for posts. But each outer iter is a fresh `generateText` call; the model's reasoning starts fresh and doesn't reliably retrieve the threadId from earlier message history. So iter 1 wastes 3 wait-cycles trying to recover a kickoff that was already consumed.
 
-**Where it bites:** Per-iter cold-start tax. The runner *knows* the threadId (it created the thread in `puppetCreateThread`). Passing it as an agent option (the same way `RUN_DIR`, `SOLO_MODE`, `DAYTONA_SANDBOX_ID` are) would eliminate the kickoff-discovery dance entirely.
+**Where it bites:** Per-iter cold-start tax. The agent burns wallclock and tokens rediscovering state it already had.
 
 **Citation:** `agents/agent-B.jsonl` iter 1 steps 0-2 vs. iter 0 steps 1-3 (where threadId was already known).
-
-**Layer:** Operator + binding. Runner injects `TEAM_ROOM_THREAD_ID`, binding exposes `team.threadId()` getter.
 
 ### F4 — No state recovery on null wait
 
@@ -58,8 +54,6 @@ After iter 1, the thread is functionally dead. Both agents continue calling `tea
 
 **Citation:** General pattern across both traces. Agent-A iter 1, iter 4, iter 7 all show the same wait-then-give-up pattern.
 
-**Layer:** Binding. Add `team.history({limit, since?})` or `team.peek()` as a non-mention-filtered read.
-
 ### F5 — Prompt frames the thread as chat, not state
 
 **What happened:** `coral-agent.toml` calls team-room "your shared coordination channel." The kickoff message says: *"Use team.wait() to receive teammate replies, team.post(threadId, ...) to send."* This is conversational framing. The model treats the thread accordingly: small-talk style messages, no structure, no follow-up posts after the initial introductions.
@@ -67,8 +61,6 @@ After iter 1, the thread is functionally dead. Both agents continue calling `tea
 **Where it bites:** Agents post once at the start to introduce themselves, then never again unless prompted by an external event. There's no convention for "every meaningful change deserves a thread post" because the framing doesn't suggest it.
 
 **Citation:** Both agents post 1-2 messages in iter 0, then go silent. Iter 7 of both agents catches open redirect privately and reasons about it for 100s of tokens — neither posts anything to thread about it. `agents/agent-A.jsonl` iter 7 step 4: *"Open redirect vulnerability — the redirect endpoint accepts any URL including javascript: and fil[e]."* Tool call that follows: a 5-second `team.wait`, not a `team.post` about the issue.
-
-**Layer:** Prompt. Codex's "shared ledger" framing is the right reframe.
 
 ### F6 — No iter-loop nudge to externalize state
 
@@ -78,91 +70,88 @@ After iter 1, the thread is functionally dead. Both agents continue calling `tea
 
 **Citation:** Compare any iter's tool call sequence — they're whatever the model picked, not a fixed pattern.
 
-**Layer:** Runtime. Could be done as a prompt-only "every iter must end with a thread post" rule, but stronger as a synthetic message injected by the agent runtime at iter boundaries.
-
 ### F7 — Cleanup race shows up in the trace tail
 
 **What happened:** `agents/agent-A.jsonl` iter 10: *"The Daytona read is failing with 401."* This is the sandbox dying mid-iter as the runner reaches wallclock and starts cleanup. Pre-existing issue — already documented in `foundation_coral-koog-swarm-patterns.md` as the homogeneous-write-race surface.
 
 **Where it bites:** Last 1-2 iters of every long run produce noise that looks like work but isn't. For experiments that judge final artifacts, doesn't really matter (artifact is exported before cleanup). For experiments that judge trace quality, polluting noise.
 
-**Layer:** Runner. Out of scope for this review; flagging only.
+## Native Coral capabilities not used
 
-## Coral binding layer recommendations
+Per upstream Coral source (verified via deepwiki against `Coral-Protocol/coral-server`), every SessionAgent's per-agent MCP server exposes 9 native MCP tools and 2 native MCP resources. Our `team-swarm/agent-bindings/team.ts` binding exposes only two of them: `coral_send_message` (as `team.post`) and `coral_wait_for_mention` (as `team.wait`). The seven primitives we *didn't* surface are below, ordered by how directly they would have addressed observed failures.
 
-These are the changes I'd ship before the next experiment, in priority order. All are local to `team-swarm/agent-bindings/team.ts` and the runner; no Coral upstream changes needed.
+### `coral://state` — built-in MCP resource
 
-### 1. Pass `TEAM_ROOM_THREAD_ID` as an agent option (eliminates F3)
+Returns Markdown describing the requesting agent's observable session state: list of threads it participates in with all messages (regardless of mention status), connection/wait status of every linked agent, and current session timestamps. Per-agent participation-scoped — agent-A's read returns agent-A's view, agent-B's returns B's view. Backed by `handleStateResource` in `SessionAgent.kt`; no caching, fresh on every read.
 
-The runner knows the threadId after `puppetCreateThread`. Pass it via `buildSessionSpec` like every other agent option. Binding reads it from env at boot. Agents never have to discover the threadId by waiting for kickoff.
+**Would have addressed:** F2 (mention-filter blindness), F3 (threadId loss — list of participating threads is in the response), F4 (no recovery on null wait). The single largest cluster of observed failures collapses if this resource is read after every wait timeout.
 
-```ts
-// In team.ts (binding)
-const TEAM_ROOM_THREAD_ID = process.env.TEAM_ROOM_THREAD_ID;
-export const team = {
-  threadId: () => TEAM_ROOM_THREAD_ID,
-  post: (content: string, mentions?: string[]) => /* uses TEAM_ROOM_THREAD_ID internally */,
-  // ...
-};
-```
+**Why we missed it:** Our binding only surfaces MCP tool calls, not MCP resource reads. The resource was sitting on the per-agent MCP server the entire run, never queried.
 
-Note this also lets `team.post(content, mentions)` drop the `threadId` parameter entirely — one fewer thing for the model to track.
+### `coral_wait_for_agent(agentName)` — MCP tool
 
-### 2. Make `mentions` non-droppable (addresses F1)
+Blocks until a message arrives from a specific named agent, independent of mention status or thread.
 
-Two options, in order of strength:
+**Would have addressed:** F1. Agent-A could have called `coral_wait_for_agent("agent-B")` after its kickoff post and received agent-B's mention-less reply directly, no mention-filter in the path.
 
-- **Strong:** Remove the `mentions` parameter from `team.post`. Auto-mention all peers (the binding knows peer names; the runner can pass `TEAM_PEER_NAMES` as an agent option). Renames the call to `team.broadcast(content)` to make this semantic explicit.
-- **Soft:** Keep `team.post(content, mentions)` but make `mentions` required. Throw at the binding layer if the array is empty AND no peers are auto-detected.
+**Why we missed it:** We didn't know this primitive existed. Not documented in `foundation_coral-koog-swarm-patterns.md`; not surfaced in our binding.
 
-I'd ship the strong version. The "I want to send a private aside to one specific peer" use case doesn't apply in a homogeneous-coordination experiment with 2 agents.
+### `coral_wait_for_message` — MCP tool
 
-### 3. Add `team.history({limit, since?})` (addresses F2 + F4)
+Same shape as `coral_wait_for_mention` but with no mention filter. Blocks until *any* message arrives in any thread the agent participates in.
 
-A non-mention-filtered read of recent thread messages. Backed by `coral_list_messages` (or whatever Coral's equivalent is — worth verifying via deepwiki, but the substrate has it). When `team.wait` returns null, the agent has a recovery path: *"let me see what's on the thread that I missed."*
+**Would have addressed:** F1, F2 (partial). Had agent-A waited via this primitive instead of `wait_for_mention`, agent-B's mention-less posts would have unblocked it normally.
 
-```ts
-team.history: (opts?: {limit?: number; since?: string}) => Promise<TeamMessage[]>
-```
+**Why we missed it:** Foundation memory documents a deliberate prior-session decision to use `wait_for_mention` for routing reasons. Decision was made consciously; this run is a clear illustration of the cost of that trade-off when the mention contract isn't reliably honored upstream.
 
-### 4. (Optional) `team.openIssue` / `team.closeIssue` helpers (addresses F5 + F6 partially)
+### `coral_add_participant` / `coral_remove_participant` — MCP tools
 
-Per Codex's structured-protocol idea, but as binding helpers rather than YAML-on-the-wire. These post structured messages that the binding parses on the receive side, so when an agent calls `team.history`, it sees `{kind: "issue", id, severity, status, evidence}` records, not free-text it has to re-parse.
+Dynamic thread membership: add or remove an agent from an existing thread without ending the session.
 
-Lower priority than 1-3. Worth shipping only if the prompt-only ledger framing (next section) doesn't generate enough structured behavior on its own.
+**Would have addressed:** None of F1–F7 directly. Worth flagging as enabling-pattern — supports topologies like "spawn a reviewer agent only after implementer says done" or "remove the puppet from team-room once kickoff is delivered, eliminating it from every agent's `coral://state` views." Out of scope for a static 2-agent pair; relevant if topology becomes dynamic.
 
-## Coral prompt recommendations
+**Why we missed it:** No use case in the current static-pair shape.
 
-Independent of the binding work, two prompt changes that are zero-cost and worth doing in the same revision:
+### `coral_close_thread(summary)` — MCP tool
 
-### 1. Reframe team-room as the team's append-only state log
+Closes a thread with a summary message attached at the substrate level.
 
-Replace the current "shared coordination channel" language in `coral-agent.toml` with something like:
+**Would have addressed:** None of F1–F7 directly. Worth flagging as observability — when the team thinks they're done, they post a summary of what happened. Captured at the substrate as a thread state transition, not derivable from message-tail heuristics or operator-side polling.
 
-> The team-room thread is your team's append-only state log. Treat it as the only authoritative record of what's been decided, who owns what, what's open, and what's done. **If a fact is not in the thread, it does not exist as shared state.** When you make a meaningful decision, finish a unit of work, find a bug, or change ownership, post to the thread. Posting too much is much cheaper than posting too little.
+**Why we missed it:** Acceptance gating happens at the runner layer (file existence check, wallclock); thread state is never consulted for "is the team done."
 
-This is Codex's reframe and it's correct. Lifts F5 directly.
+### `coral://instructions` — built-in MCP resource
 
-### 2. Drop the team-room threadId discovery section
+Markdown aggregation of `McpInstructionSnippet` entries registered against the agent's available tools. Coral plugins can attach custom instruction snippets to their tool registrations; these flow into every agent's resource read alongside the built-in tool docs.
 
-Once F3 is fixed at the binding layer, the prompt's entire "Your first action / The message you receive will include `threadId` — that is the team-room thread id. Save it" section becomes obsolete and confusing. Replace with a one-liner: *"Your first action should be `team.history()` to see whatever the team has discussed so far."* This naturally introduces the new history primitive and gives the agent something productive to do at iter 0 instead of waiting on a kickoff that may have already been consumed.
+**Would have addressed:** F5 (prompt frames thread as chat) — *if* a custom Coral plugin registered behavioral instruction snippets like "treat team-room as append-only ledger" alongside its message-passing tools, the framing would land at the substrate level and be visible in every agent's `coral://instructions` read, regardless of what `coral-agent.toml` says.
 
-## What the Coral layer can't fix (model-side)
+**Why we missed it:** We don't ship custom Coral plugins. The instructions resource is currently populated only by built-in tool snippets.
 
-A few things from this run that are *not* binding or prompt issues — the model just behaved suboptimally and no API change rescues it:
+### `coral_close_session` — MCP tool (plugin-controlled)
 
-- **Single arm iter 7:** *"I should just build the app as a normal user would, without overthinking security."* The single agent saw something in its context (probably evaluation framing leaking from the seed prompt or an internal heuristic about "what a real user wants") and downgraded its security work. No Coral fix touches this. Mitigation is upstream: scrub anything that hints at evaluation/research/experiment from what reaches the model. Worth checking what `buildSeed` actually produces under `--solo` to see if anything leaks.
-- **Both arms wrote dead code.** Pair has unused `deleteLink`. Single has an entire stale `index.ts + tests` path. These are catches a real pair would surface in a code review, but neither agent noticed in the trace. This is a model-attention issue (deeper context, more tokens — diminishing returns under iter 5).
-- **Both agents privately reasoned correctly about open redirect, neither shipped a fix.** The structural fix (force externalization) addresses the *coordination* failure but doesn't make either agent actually patch the code. If both agents externalize "open redirect is open" to thread, you'd get two agents agreeing it's open — neither has been given the go-ahead-and-fix-it impulse the structural change alone provides. Closing the loop requires the prompt to explicitly say *"open issues in the thread are blocking until they have a corresponding closed-issue post."*
+Terminates all agents in the session at the substrate level.
+
+**Would have addressed:** None of F1–F7 directly. F7 (cleanup race) is operator-side — the runner currently destroys the sandbox via Daytona REST, so this primitive isn't on our cleanup path. Worth flagging that prior session findings (`foundation_coral-koog-swarm-patterns.md`) record this primitive as unreliable when called from agents; consider re-verifying against the latest Coral if substrate-side closure becomes desirable.
+
+**Why we missed it:** Closure is operator-owned per existing project rule.
+
+## What native Coral can't address (model-side)
+
+Three things from this run that no native primitive — used or unused — addresses:
+
+- **Single arm iter 7:** *"I should just build the app as a normal user would, without overthinking security."* The single agent saw something in its context that downgraded its security posture. No native primitive controls what reaches the agent's context window. Mitigation is upstream of Coral entirely: scrub anything that hints at evaluation/research/experiment from what gets passed to `EXTRA_INITIAL_USER_PROMPT`.
+- **Both arms wrote dead code.** Pair has unused `deleteLink`. Single has an entire stale `index.ts + tests` path. Coral has no pre-emptive code-review primitive; this is model-attention territory and not a substrate question.
+- **Both agents privately reasoned correctly about open redirect, neither shipped a fix.** Surfacing thread state via `coral://state` addresses the *coordination* failure (agent-A would have seen agent-B's reply, both could have raised the issue in thread). It does not address the *follow-through* failure — both agents could agree open redirect is open in thread, and still neither writes the patch. That's a model-behavior pattern, not a substrate gap.
 
 ## Suggested follow-up experiments
 
-Concrete, in priority order:
+Each tests whether using a specific native Coral primitive changes the failure rate observed in this run.
 
-1. **Re-run pair under the binding fixes (1-3 above) + prompt reframe with the same URL-shortener prompt.** Does the thread stay alive past iter 0? Does the catch-credit tally improve? This is the cheapest, highest-signal experiment and it's a same-arm A/B against this run as the baseline.
-2. **Add a 4th replicate to each of {solo, pair-baseline, pair-fixed} for variance.** This run is N=1 per arm. Without replicates we can't separate signal from K2.6's iter-to-iter variance.
-3. **Codex's 3-arm ladder (chat-only / prompt-only ledger / prompt + binding helpers).** Specifically *after* the binding fixes above, this isolates "did the prompt reframe alone lift performance, or did we also need the binding ergonomics?" Doing this before binding fixes confounds the two effects.
-4. **Sweep model.** The pair pattern's success may be model-dependent. Once the binding is right, run the same prompt against Sonnet 4.6, Haiku 4.5, and DeepSeek V4 to see whether the pair value-add is uniform across models or unique to certain ones.
+1. **Surface `coral://state` reads and re-run pair under the same prompt.** Lowest-cost, highest-leverage test — does adding one resource read to the binding change F2/F3/F4? Same prompt, same model, same wallclock; only difference is the agent can fetch canonical thread state when its wait returns null. If thread stays alive past iter 0 in 2/3 replicates, the primitive landed.
+2. **Switch the wait primitive from `coral_wait_for_mention` to `coral_wait_for_message`.** Tests whether F1 (mention-discipline) bites when the wait isn't filtered. Could be combined with #1 or run separately to isolate the effect.
+3. **Sweep replicates per arm.** This run is N=1 per arm. Even before changing anything else, three replicates per condition tells us how much of what we observed was K2.6 variance vs. structural failure.
+4. **Sweep model.** Once we know native primitive use changes outcomes, run the same setup against Sonnet 4.6, Haiku 4.5, and DeepSeek V4. The mention-discipline failure may be model-specific or universal; can't tell from one model.
 
 ## Files referenced
 
@@ -171,5 +160,5 @@ Concrete, in priority order:
 - `research/2026-04-28-pair-vs-single-median-prompt/pair/20260428-203716-c04e2736/trace/agents/agent-B.jsonl`
 - `team-swarm/agent-bindings/team.ts`
 - `team-swarm/agent/coral-agent.toml`
-- `orchestration/run-swarm-task.ts`
 - `foundation_coral-koog-swarm-patterns.md` (memory)
+- Upstream Coral source: `https://github.com/Coral-Protocol/coral-server` (`McpToolManager.kt`, `McpToolName.kt`, `McpResourceName.kt`, `SessionAgent.kt`)
